@@ -1,0 +1,26 @@
+{
+  "name": "domify",
+  "id": "1619998054197005456",
+  "api": "1.0.0",
+  "main": "code.js",
+  "capabilities": [
+    "codegen"
+  ],
+  "enableProposedApi": false,
+  "documentAccess": "dynamic-page",
+  "editorType": [
+    "dev"
+  ],
+  "ui": "ui.html",
+  "codegenLanguages": [
+    {
+      "label": "DOMify HTML/CSS/Metadata",
+      "value": "domify-mvp"
+    }
+  ],
+  "networkAccess": {
+    "allowedDomains": [
+      "none"
+    ]
+  }
+}
