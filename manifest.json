@@ -18,6 +18,26 @@
       "value": "domify-mvp"
     }
   ],
+  "codegenPreferences": [
+    {
+      "itemType": "select",
+      "propertyName": "framework",
+      "label": "Framework",
+      "options": [
+        { "label": "None", "value": "none", "isDefault": true },
+        { "label": "Vue", "value": "vue" }
+      ]
+    },
+    {
+      "itemType": "select",
+      "propertyName": "dataAttributes",
+      "label": "Data Attributes",
+      "options": [
+        { "label": "Include", "value": "include", "isDefault": true },
+        { "label": "Exclude", "value": "exclude" }
+      ]
+    }
+  ],
   "networkAccess": {
     "allowedDomains": [
       "none"

@@ -50,15 +50,26 @@ type DomifyContext = {
   warnings: Set<string>;
   fileUrl: string | null;
   classNames: Map<string, string>;
+  includeDataAttributes: boolean;
+  framework: string;
 };
 
 figma.codegen.on('generate', async (event) => {
   const classNames = buildClassNameMap(event.node);
+  const includeDataAttributes = figma.codegen.preferences.customSettings['dataAttributes'] !== 'exclude';
+  const framework = figma.codegen.preferences.customSettings['framework'] ?? 'none';
+  if (framework === 'vue') {
+    for (const [id, name] of classNames) {
+      classNames.set(id, toCamelCase(name));
+    }
+  }
   const context: DomifyContext = {
     cssRules: [],
     warnings: new Set<string>(),
     fileUrl: getFileUrl(),
     classNames,
+    includeDataAttributes,
+    framework,
   };
 
   const rootResult = await renderNode(event.node, context, 0);
@@ -97,7 +108,7 @@ async function renderNode(node: SceneNode, context: DomifyContext, depth: number
 
   const className = context.classNames.get(node.id) ?? toClassName(node.name);
   const metadata = await buildMetadata(node, context.fileUrl);
-  const attrs = toAttributes(node, className, metadata.provenance, metadata.url);
+  const attrs = toAttributes(node, className, metadata.provenance, metadata.url, context.includeDataAttributes, context.framework);
   const tagName = node.type === 'TEXT' ? 'span' : 'div';
   const textContent = node.type === 'TEXT' ? escapeHtml(node.characters ?? '') : '';
   const children = 'children' in node ? Array.from(node.children) : [];
@@ -145,7 +156,7 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
   try {
     const svgString = await node.exportAsync({ format: 'SVG_STRING' });
     if (svgString.length < SVG_SIZE_THRESHOLD) {
-      const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'svg');
+      const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'svg', context.includeDataAttributes, context.framework);
       return {
         html: `${indent(depth)}<div${attrs}>\n${indent(depth + 1)}${svgString}\n${indent(depth)}</div>`,
         metadata,
@@ -154,7 +165,7 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
   } catch { /* empty */ }
 
   const placeholderSrc = buildPlaceholderDataUri(node.id, nodeUrl, w, h);
-  const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image');
+  const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image', context.includeDataAttributes, context.framework);
   const cssRule = await toCssRule(node, className);
   if (cssRule) context.cssRules.push(cssRule);
   return {
@@ -169,9 +180,14 @@ function toAssetAttributes(
   provenance: DomifyProvenance,
   nodeUrl: string | null,
   assetType: 'svg' | 'image',
+  includeDataAttributes: boolean,
+  framework: string,
 ): string {
-  const base = toAttributes(node, className, provenance, nodeUrl);
-  return `${base} data-figma-asset="${assetType}"`;
+  const base = toAttributes(node, className, provenance, nodeUrl, includeDataAttributes, framework);
+  if (includeDataAttributes) {
+    return `${base} data-figma-asset="${assetType}"`;
+  }
+  return base;
 }
 
 function buildPlaceholderDataUri(nodeId: string, nodeUrl: string | null, w: number, h: number): string {
@@ -246,20 +262,24 @@ function toAttributes(
   className: string,
   provenance: DomifyProvenance,
   nodeUrl: string | null,
+  includeDataAttributes: boolean,
+  framework: string,
 ): string {
-  const attrs: string[] = [
-    `class="${className}"`,
-    `data-figma-node-id="${escapeHtml(node.id)}"`,
-    `data-figma-node-type="${escapeHtml(node.type)}"`,
-  ];
+  const classAttr = framework === 'vue'
+    ? `:class="$style.${className}"`
+    : `class="${className}"`;
+  const attrs: string[] = [classAttr];
 
-  if (nodeUrl) attrs.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
-  if (provenance.componentKey) attrs.push(`data-figma-component-key="${escapeHtml(provenance.componentKey)}"`);
-
-  if (provenance.isInstance) {
-    attrs.push('data-figma-instance="true"');
-    if (provenance.mainComponentId) attrs.push(`data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`);
-    if (provenance.mainComponentKey) attrs.push(`data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`);
+  if (includeDataAttributes) {
+    attrs.push(`data-figma-node-id="${escapeHtml(node.id)}"`);
+    attrs.push(`data-figma-node-type="${escapeHtml(node.type)}"`);
+    if (nodeUrl) attrs.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
+    if (provenance.componentKey) attrs.push(`data-figma-component-key="${escapeHtml(provenance.componentKey)}"`);
+    if (provenance.isInstance) {
+      attrs.push('data-figma-instance="true"');
+      if (provenance.mainComponentId) attrs.push(`data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`);
+      if (provenance.mainComponentKey) attrs.push(`data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`);
+    }
   }
 
   return ` ${attrs.join(' ')}`;
@@ -330,6 +350,10 @@ function toClassName(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return sanitized.length > 0 ? sanitized : 'unnamed';
+}
+
+function toCamelCase(kebab: string): string {
+  return kebab.replace(/-+([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 }
 
 function getFileUrl(): string | null {
