@@ -152,6 +152,8 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
   const w = 'width' in node && typeof node.width === 'number' ? Math.round(node.width) : 100;
   const h = 'height' in node && typeof node.height === 'number' ? Math.round(node.height) : 100;
 
+  await collectCssRule(node, className, context.cssMap);
+
   try {
     const svgString = await node.exportAsync({ format: 'SVG_STRING' });
     if (svgString.length < SVG_SIZE_THRESHOLD) {
@@ -165,7 +167,6 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
 
   const placeholderSrc = buildPlaceholderDataUri(node.id, nodeUrl, w, h);
   const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image', context.includeDataAttributes, context.framework);
-  await collectCssRule(node, className, context.cssMap);
   return {
     html: `${indent(depth)}<img${attrs} src="${placeholderSrc}" alt="asset:${escapeHtml(node.id)}" width="${w}" height="${h}" />`,
     metadata,
