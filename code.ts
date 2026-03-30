@@ -46,7 +46,7 @@ type DomifyRenderResult = {
 };
 
 type DomifyContext = {
-  cssRules: string[];
+  cssMap: Map<string, Set<string>>;
   warnings: Set<string>;
   fileUrl: string | null;
   classNames: Map<string, string>;
@@ -64,7 +64,7 @@ figma.codegen.on('generate', async (event) => {
     }
   }
   const context: DomifyContext = {
-    cssRules: [],
+    cssMap: new Map<string, Set<string>>(),
     warnings: new Set<string>(),
     fileUrl: getFileUrl(),
     classNames,
@@ -91,10 +91,10 @@ figma.codegen.on('generate', async (event) => {
     tree: rootResult.metadata,
   };
 
-  const cssText = context.cssRules.join('\n\n').trim();
+  const cssText = formatCssOutput(context.cssMap);
   return [
     { title: 'HTML', language: 'HTML', code: rootResult.html },
-    { title: 'CSS', language: 'CSS', code: cssText.length > 0 ? cssText : '/* No CSS emitted. */' },
+    { title: 'CSS', language: 'CSS', code: cssText },
     { title: 'Metadata', language: 'PLAINTEXT', code: JSON.stringify(metadataPayload, null, 2) },
   ];
 });
@@ -113,8 +113,7 @@ async function renderNode(node: SceneNode, context: DomifyContext, depth: number
   const textContent = node.type === 'TEXT' ? escapeHtml(node.characters ?? '') : '';
   const children = 'children' in node ? Array.from(node.children) : [];
 
-  const cssRule = await toCssRule(node, className);
-  if (cssRule) context.cssRules.push(cssRule);
+  await collectCssRule(node, className, context.cssMap);
 
   if (children.length === 0) {
     return {
@@ -166,8 +165,7 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
 
   const placeholderSrc = buildPlaceholderDataUri(node.id, nodeUrl, w, h);
   const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image', context.includeDataAttributes, context.framework);
-  const cssRule = await toCssRule(node, className);
-  if (cssRule) context.cssRules.push(cssRule);
+  await collectCssRule(node, className, context.cssMap);
   return {
     html: `${indent(depth)}<img${attrs} src="${placeholderSrc}" alt="asset:${escapeHtml(node.id)}" width="${w}" height="${h}" />`,
     metadata,
@@ -207,9 +205,9 @@ function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function toCssRule(node: SceneNode, className: string): Promise<string> {
-  const cssMap = await node.getCSSAsync();
-  const allEntries = Object.entries(cssMap)
+async function collectCssRule(node: SceneNode, className: string, cssMap: Map<string, Set<string>>): Promise<void> {
+  const nodeCss = await node.getCSSAsync();
+  const allEntries = Object.entries(nodeCss)
     .filter(([prop]) => !DOMIFY_CONFIG.ignoredProperties.includes(prop))
     .map(([prop, val]) => [prop, stripInlineComments(val)] as const);
 
@@ -218,18 +216,36 @@ async function toCssRule(node: SceneNode, className: string): Promise<string> {
     ? allEntries.filter(([prop]) => prop !== 'gap')
     : allEntries;
 
-  const rules: string[] = [];
-
   if (entries.length > 0) {
     const declarations = entries.map(([prop, val]) => `  ${prop}: ${val};`).join('\n');
-    rules.push(`.${className} {\n${declarations}\n}`);
+    addCssEntry(cssMap, `.${className}`, declarations);
   }
 
   if (negativeGap) {
-    rules.push(toNegativeGapRule(className, negativeGap.value, allEntries));
+    const direction = allEntries.find(([prop]) => prop === 'flex-direction');
+    const isVertical = direction && direction[1] === 'column';
+    const marginProp = isVertical ? 'margin-top' : 'margin-left';
+    addCssEntry(cssMap, `.${className} > * + *`, `  ${marginProp}: ${negativeGap.value};`);
   }
+}
 
-  return rules.join('\n\n');
+function addCssEntry(cssMap: Map<string, Set<string>>, selector: string, declarations: string): void {
+  const existing = cssMap.get(declarations);
+  if (existing) {
+    existing.add(selector);
+  } else {
+    cssMap.set(declarations, new Set([selector]));
+  }
+}
+
+function formatCssOutput(cssMap: Map<string, Set<string>>): string {
+  const rules: string[] = [];
+  for (const [declarations, selectors] of cssMap) {
+    const selectorStr = Array.from(selectors).join(',\n');
+    rules.push(`${selectorStr} {\n${declarations}\n}`);
+  }
+  const text = rules.join('\n\n').trim();
+  return text.length > 0 ? text : '/* No CSS emitted. */';
 }
 
 function extractNegativeGap(
@@ -240,17 +256,6 @@ function extractNegativeGap(
   const value = gap[1];
   if (!value.startsWith('-')) return null;
   return { value };
-}
-
-function toNegativeGapRule(
-  className: string,
-  gapValue: string,
-  entries: readonly (readonly [string, string])[],
-): string {
-  const direction = entries.find(([prop]) => prop === 'flex-direction');
-  const isVertical = direction && direction[1] === 'column';
-  const marginProp = isVertical ? 'margin-top' : 'margin-left';
-  return `.${className} > * + * {\n  ${marginProp}: ${gapValue};\n}`;
 }
 
 function stripInlineComments(value: string): string {
