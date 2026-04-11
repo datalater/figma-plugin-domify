@@ -46,6 +46,11 @@
         { "label": "Include", "value": "include", "isDefault": true },
         { "label": "Exclude", "value": "exclude" }
       ]
+    },
+    {
+      "itemType": "action",
+      "propertyName": "tagComponents",
+      "label": "Tag Components"
     }
   ],
   "networkAccess": {

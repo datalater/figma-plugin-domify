@@ -54,6 +54,89 @@ type DomifyContext = {
   cssMode: "plain" | "tailwind4";
 };
 
+const PLUGIN_DATA_KEY = 'componentName';
+
+figma.codegen.on('preferenceschange', async (event) => {
+  if (event.propertyName === 'tagComponents') {
+    figma.showUI(__html__, { visible: true, width: 280, height: 360 });
+    figma.on('selectionchange', () => sendSelectionInfo());
+    figma.ui.onmessage = handleUIMessage;
+    sendSelectionInfo();
+    sendTagList();
+  }
+});
+
+initCodegen();
+
+async function handleUIMessage(msg: { type: string; nodeId?: string; name?: string }): Promise<void> {
+  if (msg.type === 'init') {
+    sendSelectionInfo();
+    sendTagList();
+  }
+
+  if (msg.type === 'tag' && msg.nodeId && msg.name) {
+    const node = await figma.getNodeByIdAsync(msg.nodeId);
+    if (node) {
+      (node as SceneNode).setPluginData(PLUGIN_DATA_KEY, msg.name);
+      sendSelectionInfo();
+      sendTagList();
+      figma.codegen.refresh();
+    }
+  }
+
+  if (msg.type === 'remove-tag' && msg.nodeId) {
+    const node = await figma.getNodeByIdAsync(msg.nodeId);
+    if (node) {
+      (node as SceneNode).setPluginData(PLUGIN_DATA_KEY, '');
+      sendSelectionInfo();
+      sendTagList();
+      figma.codegen.refresh();
+    }
+  }
+}
+
+function sendSelectionInfo(): void {
+  const sel = figma.currentPage.selection;
+  if (sel.length === 0) {
+    figma.ui.postMessage({ type: 'selection', node: null });
+    return;
+  }
+  const node = sel[0];
+  figma.ui.postMessage({
+    type: 'selection',
+    node: {
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      tag: node.getPluginData(PLUGIN_DATA_KEY) || null,
+    },
+  });
+}
+
+function sendTagList(): void {
+  const tags: Array<{ nodeId: string; nodeName: string; componentName: string }> = [];
+  collectTags(figma.currentPage, tags);
+  figma.ui.postMessage({ type: 'tag-list', tags });
+}
+
+function collectTags(
+  node: BaseNode,
+  tags: Array<{ nodeId: string; nodeName: string; componentName: string }>,
+): void {
+  if ('getPluginData' in node) {
+    const tag = (node as SceneNode).getPluginData(PLUGIN_DATA_KEY);
+    if (tag) {
+      tags.push({ nodeId: node.id, nodeName: node.name, componentName: tag });
+    }
+  }
+  if ('children' in node) {
+    for (const child of (node as ChildrenMixin).children) {
+      collectTags(child, tags);
+    }
+  }
+}
+
+function initCodegen(): void {
 figma.codegen.on("generate", async (event) => {
   const classNames = buildClassNameMap(event.node);
   const includeDataAttributes =
@@ -119,6 +202,7 @@ figma.codegen.on("generate", async (event) => {
     },
   ];
 });
+}
 
 async function renderNode(
   node: SceneNode,
@@ -586,40 +670,50 @@ function toAttributes(
   cssMode: string,
   tailwindClasses: string[] = [],
 ): string {
-  const attrs: string[] = [];
+  const dataAttrs: string[] = [];
+  const otherAttrs: string[] = [];
 
-  const classAttrName = framework === "react" ? "className" : "class";
+  const componentTag = node.getPluginData(PLUGIN_DATA_KEY);
+  if (componentTag) {
+    dataAttrs.push(`data-component="${escapeHtml(componentTag)}"`);
+  }
 
   if (cssMode === "tailwind4") {
-    const twClass = tailwindClasses.join(" ");
-    if (twClass.length > 0) attrs.push(`${classAttrName}="${twClass}"`);
-    attrs.push(`data-node-name="${escapeHtml(className)}"`);
-  } else if (framework === "vue") {
-    attrs.push(`:class="$style.${className}"`);
-  } else {
-    attrs.push(`${classAttrName}="${className}"`);
+    dataAttrs.push(`data-node-name="${escapeHtml(className)}"`);
   }
 
   if (includeDataAttributes) {
-    attrs.push(`data-figma-node-id="${escapeHtml(node.id)}"`);
-    attrs.push(`data-figma-node-type="${escapeHtml(node.type)}"`);
-    if (nodeUrl) attrs.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
+    dataAttrs.push(`data-figma-node-id="${escapeHtml(node.id)}"`);
+    dataAttrs.push(`data-figma-node-type="${escapeHtml(node.type)}"`);
+    if (nodeUrl) dataAttrs.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
     if (provenance.componentKey)
-      attrs.push(
+      dataAttrs.push(
         `data-figma-component-key="${escapeHtml(provenance.componentKey)}"`,
       );
     if (provenance.isInstance) {
-      attrs.push('data-figma-instance="true"');
+      dataAttrs.push('data-figma-instance="true"');
       if (provenance.mainComponentId)
-        attrs.push(
+        dataAttrs.push(
           `data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`,
         );
       if (provenance.mainComponentKey)
-        attrs.push(
+        dataAttrs.push(
           `data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`,
         );
     }
   }
+
+  const classAttrName = framework === "react" ? "className" : "class";
+  if (cssMode === "tailwind4") {
+    const twClass = tailwindClasses.join(" ");
+    if (twClass.length > 0) otherAttrs.push(`${classAttrName}="${twClass}"`);
+  } else if (framework === "vue") {
+    otherAttrs.push(`:class="$style.${className}"`);
+  } else {
+    otherAttrs.push(`${classAttrName}="${className}"`);
+  }
+
+  const attrs = [...dataAttrs, ...otherAttrs];
 
   return ` ${attrs.join(" ")}`;
 }
