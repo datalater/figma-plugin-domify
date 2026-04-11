@@ -43,8 +43,9 @@
       "propertyName": "dataAttributes",
       "label": "Data Attributes",
       "options": [
-        { "label": "Include", "value": "include", "isDefault": true },
-        { "label": "Exclude", "value": "exclude" }
+        { "label": "All", "value": "all" },
+        { "label": "Minimal (component + node-name)", "value": "minimal", "isDefault": true },
+        { "label": "None", "value": "none" }
       ]
     },
     {

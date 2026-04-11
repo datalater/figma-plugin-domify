@@ -44,12 +44,21 @@ type DomifyRenderResult = {
   metadata: DomifyMetadataNode;
 };
 
+type DataAttrConfig = {
+  component: boolean;
+  nodeName: boolean;
+  nodeId: boolean;
+  nodeType: boolean;
+  url: boolean;
+  provenance: boolean;
+};
+
 type DomifyContext = {
   cssMap: Map<string, Set<string>>;
   warnings: Set<string>;
   fileUrl: string | null;
   classNames: Map<string, string>;
-  includeDataAttributes: boolean;
+  dataAttrs: DataAttrConfig;
   framework: string;
   cssMode: "plain" | "tailwind4";
 };
@@ -144,15 +153,23 @@ function collectTags(
   }
 }
 
+function buildDataAttrConfig(preset: string): DataAttrConfig {
+  if (preset === 'none') {
+    return { component: false, nodeName: false, nodeId: false, nodeType: false, url: false, provenance: false };
+  }
+  if (preset === 'minimal') {
+    return { component: true, nodeName: true, nodeId: false, nodeType: false, url: false, provenance: false };
+  }
+  return { component: true, nodeName: true, nodeId: true, nodeType: true, url: true, provenance: true };
+}
+
 function initCodegen(): void {
 figma.codegen.on("generate", async (event) => {
   const classNames = buildClassNameMap(event.node);
-  const includeDataAttributes =
-    figma.codegen.preferences.customSettings["dataAttributes"] !== "exclude";
-  const framework =
-    figma.codegen.preferences.customSettings["framework"] ?? "none";
-  const cssMode =
-    figma.codegen.preferences.customSettings["cssMode"] ?? "plain";
+  const s = figma.codegen.preferences.customSettings;
+  const framework = s["framework"] ?? "none";
+  const cssMode = s["cssMode"] ?? "plain";
+  const dataPreset = s["dataAttributes"] ?? "all";
 
   if (framework === "vue") {
     for (const [id, name] of classNames) {
@@ -165,7 +182,7 @@ figma.codegen.on("generate", async (event) => {
     warnings: new Set<string>(),
     fileUrl: getFileUrl(),
     classNames,
-    includeDataAttributes,
+    dataAttrs: buildDataAttrConfig(dataPreset),
     framework,
     cssMode: cssMode as "plain" | "tailwind4",
   };
@@ -244,7 +261,7 @@ async function renderNode(
     className,
     metadata.provenance,
     metadata.url,
-    context.includeDataAttributes,
+    context.dataAttrs,
     context.framework,
     context.cssMode,
     tailwindClasses,
@@ -325,7 +342,7 @@ async function renderTextNodePlain(
 ): Promise<DomifyRenderResult> {
   await collectCssRule(node, className, context.cssMap);
   const attrs = toAttributes(node, className, metadata.provenance, metadata.url,
-    context.includeDataAttributes, context.framework, context.cssMode, []);
+    context.dataAttrs, context.framework, context.cssMode, []);
   return {
     html: `${indent(depth)}<span${attrs}>${escapeHtml(node.characters ?? '')}</span>`,
     metadata,
@@ -341,7 +358,7 @@ async function renderTextNodeSingle(
 ): Promise<DomifyRenderResult> {
   const tailwindClasses = await collectTailwindClasses(node, className, context);
   const attrs = toAttributes(node, className, metadata.provenance, metadata.url,
-    context.includeDataAttributes, context.framework, context.cssMode, tailwindClasses);
+    context.dataAttrs, context.framework, context.cssMode, tailwindClasses);
   return {
     html: `${indent(depth)}<span${attrs}>${escapeHtml(node.characters ?? '')}</span>`,
     metadata,
@@ -365,7 +382,7 @@ function renderTextNodeMixed(
   });
 
   const wrapperAttrs = toAttributes(node, className, metadata.provenance, metadata.url,
-    context.includeDataAttributes, context.framework, context.cssMode, []);
+    context.dataAttrs, context.framework, context.cssMode, []);
 
   return {
     html: `${indent(depth)}<span${wrapperAttrs}>\n${spanLines.join('\n')}\n${indent(depth)}</span>`,
@@ -444,7 +461,7 @@ async function renderAssetNode(
         metadata.provenance,
         nodeUrl,
         "svg",
-        context.includeDataAttributes,
+        context.dataAttrs,
         context.framework,
         context.cssMode,
         tailwindClasses,
@@ -465,7 +482,7 @@ async function renderAssetNode(
     metadata.provenance,
     nodeUrl,
     "image",
-    context.includeDataAttributes,
+    context.dataAttrs,
     context.framework,
     context.cssMode,
     tailwindClasses,
@@ -482,7 +499,7 @@ function toAssetAttributes(
   provenance: DomifyProvenance,
   nodeUrl: string | null,
   assetType: "svg" | "image",
-  includeDataAttributes: boolean,
+  dataAttrs: DataAttrConfig,
   framework: string,
   cssMode: string,
   tailwindClasses: string[] = [],
@@ -492,12 +509,12 @@ function toAssetAttributes(
     className,
     provenance,
     nodeUrl,
-    includeDataAttributes,
+    dataAttrs,
     framework,
     cssMode,
     tailwindClasses,
   );
-  if (includeDataAttributes) {
+  if (dataAttrs.nodeType) {
     return `${base} data-figma-asset="${assetType}"`;
   }
   return base;
@@ -673,41 +690,43 @@ function toAttributes(
   className: string,
   provenance: DomifyProvenance,
   nodeUrl: string | null,
-  includeDataAttributes: boolean,
+  dataAttrs: DataAttrConfig,
   framework: string,
   cssMode: string,
   tailwindClasses: string[] = [],
 ): string {
-  const dataAttrs: string[] = [];
+  const dataAttrList: string[] = [];
   const otherAttrs: string[] = [];
 
-  const componentTag = node.getPluginData(PLUGIN_DATA_KEY);
-  if (componentTag) {
-    dataAttrs.push(`data-component="${escapeHtml(componentTag)}"`);
+  if (dataAttrs.component) {
+    const componentTag = node.getPluginData(PLUGIN_DATA_KEY);
+    if (componentTag) {
+      dataAttrList.push(`data-component="${escapeHtml(componentTag)}"`);
+    }
   }
 
-  if (cssMode === "tailwind4") {
-    dataAttrs.push(`data-node-name="${escapeHtml(className)}"`);
+  if (dataAttrs.nodeName && cssMode === "tailwind4") {
+    dataAttrList.push(`data-node-name="${escapeHtml(className)}"`);
   }
 
-  if (includeDataAttributes) {
-    dataAttrs.push(`data-figma-node-id="${escapeHtml(node.id)}"`);
-    dataAttrs.push(`data-figma-node-type="${escapeHtml(node.type)}"`);
-    if (nodeUrl) dataAttrs.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
+  if (dataAttrs.nodeId) {
+    dataAttrList.push(`data-figma-node-id="${escapeHtml(node.id)}"`);
+  }
+  if (dataAttrs.nodeType) {
+    dataAttrList.push(`data-figma-node-type="${escapeHtml(node.type)}"`);
+  }
+  if (dataAttrs.url && nodeUrl) {
+    dataAttrList.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
+  }
+  if (dataAttrs.provenance) {
     if (provenance.componentKey)
-      dataAttrs.push(
-        `data-figma-component-key="${escapeHtml(provenance.componentKey)}"`,
-      );
+      dataAttrList.push(`data-figma-component-key="${escapeHtml(provenance.componentKey)}"`);
     if (provenance.isInstance) {
-      dataAttrs.push('data-figma-instance="true"');
+      dataAttrList.push('data-figma-instance="true"');
       if (provenance.mainComponentId)
-        dataAttrs.push(
-          `data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`,
-        );
+        dataAttrList.push(`data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`);
       if (provenance.mainComponentKey)
-        dataAttrs.push(
-          `data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`,
-        );
+        dataAttrList.push(`data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`);
     }
   }
 
@@ -721,7 +740,7 @@ function toAttributes(
     otherAttrs.push(`${classAttrName}="${className}"`);
   }
 
-  const attrs = [...dataAttrs, ...otherAttrs];
+  const attrs = [...dataAttrList, ...otherAttrs];
 
   return ` ${attrs.join(" ")}`;
 }
