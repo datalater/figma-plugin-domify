@@ -1,4 +1,4 @@
-import { cssStringToTailwind, cssToTailwind, parseCssString } from './tailwind-converter';
+import { cssToTailwind } from "./tailwind-converter";
 
 const DOMIFY_CONFIG = {
   ignoredProperties: [

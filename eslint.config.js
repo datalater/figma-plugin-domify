@@ -33,6 +33,6 @@ module.exports = tseslint.config(
     },
   },
   {
-    ignores: ['code.js', 'dist', 'eslint.config.js'],
+    ignores: ['code.js', 'tailwind-config.js', 'tailwind-converter.js', 'dist', 'eslint.config.js'],
   },
 )
