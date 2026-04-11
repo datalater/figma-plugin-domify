@@ -585,8 +585,10 @@ async function collectTailwindClasses(
   context: DomifyContext,
 ): Promise<string[]> {
   const nodeCss = await node.getCSSAsync();
+  const skipProps = buildSkipProps(node);
   const cssProperties = Object.entries(nodeCss)
     .filter(([prop]) => !DOMIFY_CONFIG.ignoredProperties.includes(prop))
+    .filter(([prop]) => !skipProps.has(prop))
     .map(([prop, val]) => [prop, stripInlineComments(val)] as const);
 
   const tailwindClasses: string[] = [];
@@ -603,6 +605,27 @@ async function collectTailwindClasses(
   }
 
   return dedupeClasses(tailwindClasses);
+}
+
+function buildSkipProps(node: SceneNode): Set<string> {
+  const skip = new Set<string>();
+  if ('layoutSizingHorizontal' in node) {
+    const h = (node as FrameNode).layoutSizingHorizontal;
+    if (h === 'FILL' || h === 'HUG') {
+      skip.add('width');
+      skip.add('min-width');
+      skip.add('max-width');
+    }
+  }
+  if ('layoutSizingVertical' in node) {
+    const v = (node as FrameNode).layoutSizingVertical;
+    if (v === 'FILL' || v === 'HUG') {
+      skip.add('height');
+      skip.add('min-height');
+      skip.add('max-height');
+    }
+  }
+  return skip;
 }
 
 function dedupeClasses(classes: string[]): string[] {
