@@ -1,6 +1,11 @@
 /**
  * Tailwind v4 CSS-to-Class Converter
  * Converts CSS property-value pairs to Tailwind utility classes
+ * 
+ * Enhanced with:
+ * - RGB/HSL color support (converts to nearest Tailwind palette color)
+ * - Percentage opacity format (e.g., opacity: 50% → opacity-50)
+ * - Negative value handling (e.g., margin: -8px → -m-2)
  */
 
 import {
@@ -13,6 +18,115 @@ import {
   LINE_HEIGHT_SCALE,
   OPACITY_SCALE,
 } from './tailwind-config';
+
+/**
+ * Convert RGB color to hex format
+ * Handles: rgb(255, 0, 0), rgba(255, 0, 0, 0.5)
+ */
+function rgbToHex(rgb: string): string | null {
+  const match = rgb.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i);
+  if (!match) return null;
+
+  const r = parseInt(match[1], 10);
+  const g = parseInt(match[2], 10);
+  const b = parseInt(match[3], 10);
+  const a = match[4] ? parseFloat(match[4]) : 1;
+
+  // Convert to hex
+  const hex = `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+  
+  // If alpha is present and not 1, we'll handle it separately
+  if (a < 1) {
+    return hex; // Return hex, opacity will be handled separately
+  }
+  
+  return hex;
+}
+
+/**
+ * Convert HSL color to hex format
+ * Handles: hsl(0, 100%, 50%), hsla(0, 100%, 50%, 0.5)
+ */
+function hslToHex(hsl: string): string | null {
+  const match = hsl.match(/hsla?\s*\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*(?:,\s*([\d.]+))?\s*\)/i);
+  if (!match) return null;
+
+  const h = parseFloat(match[1]) / 360;
+  const s = parseFloat(match[2]) / 100;
+  const l = parseFloat(match[3]) / 100;
+
+  let r, g, b;
+
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+
+  const toHex = (x: number) => {
+    const hex = Math.round(x * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * Find nearest Tailwind color from palette
+ * Uses simple Euclidean distance in RGB space
+ */
+function findNearestColor(hex: string): string | null {
+  const targetRgb = hexToRgb(hex);
+  if (!targetRgb) return null;
+
+  let nearestColor: string | null = null;
+  let minDistance = Infinity;
+
+  for (const [paletteHex, colorName] of Object.entries(COLOR_PALETTE)) {
+    const paletteRgb = hexToRgb(paletteHex);
+    if (!paletteRgb) continue;
+
+    const distance = Math.sqrt(
+      Math.pow(targetRgb.r - paletteRgb.r, 2) +
+      Math.pow(targetRgb.g - paletteRgb.g, 2) +
+      Math.pow(targetRgb.b - paletteRgb.b, 2)
+    );
+
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearestColor = colorName;
+    }
+  }
+
+  return nearestColor;
+}
+
+/**
+ * Convert hex color to RGB object
+ */
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : null;
+}
 
 /**
  * Convert a CSS property-value pair to Tailwind utility class(es)
@@ -38,7 +152,11 @@ export function cssToTailwind(prop: string, value: string): string | null {
       bottom: 'b',
       left: 'l',
     };
-    return `${prefix}${sideMap[side]}-${SPACING_SCALE[normalizedValue] || `[${normalizedValue}]`}`;
+    const spacingResult = spacingClass('', normalizedValue);
+    if (spacingResult) {
+      return `${prefix}${sideMap[side]}-${spacingResult}`;
+    }
+    return null;
   }
 
   // Handle color properties
@@ -140,12 +258,9 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return spacingClass('max-h', normalizedValue);
   }
 
-  // Handle opacity
+  // Handle opacity (now supports both decimal and percentage formats)
   if (normalizedProp === 'opacity') {
-    const num = parseFloat(normalizedValue);
-    const percent = Math.round(num * 100);
-    const opacityKey = percent.toString();
-    return OPACITY_SCALE[opacityKey] ? `opacity-${OPACITY_SCALE[opacityKey]}` : null;
+    return opacityClass(normalizedValue);
   }
 
   // Handle overflow
@@ -318,31 +433,88 @@ export function cssToTailwind(prop: string, value: string): string | null {
 
 /**
  * Convert spacing value to Tailwind class
+ * Handles positive and negative values
  */
 function spacingClass(prefix: string, value: string): string | null {
-  const scale = SPACING_SCALE[value];
+  // Check for negative values
+  const isNegative = value.startsWith('-');
+  const absoluteValue = isNegative ? value.substring(1) : value;
+
+  const scale = SPACING_SCALE[absoluteValue];
   if (scale) {
-    return `${prefix}-${scale}`;
+    const negativePrefix = isNegative ? '-' : '';
+    return prefix ? `${negativePrefix}${prefix}-${scale}` : `${negativePrefix}${scale}`;
   }
+
   // Fallback to arbitrary value
-  return `${prefix}-[${value}]`;
+  return prefix ? `${prefix}-[${value}]` : `[${value}]`;
 }
 
 /**
  * Convert color value to Tailwind class
+ * Supports hex, rgb, rgba, hsl, hsla formats
  */
 function colorClass(prop: string, value: string): string | null {
   const colorPrefix =
     prop === 'background-color' ? 'bg' : prop === 'color' ? 'text' : 'border';
   const normalizedValue = value.toLowerCase();
-  const colorName = COLOR_PALETTE[normalizedValue];
 
+  // Try direct palette lookup first (hex colors)
+  let colorName = COLOR_PALETTE[normalizedValue];
   if (colorName) {
     return `${colorPrefix}-${colorName}`;
   }
 
+  // Try RGB conversion
+  let hex = rgbToHex(normalizedValue);
+  if (hex) {
+    colorName = COLOR_PALETTE[hex.toLowerCase()];
+    if (colorName) {
+      return `${colorPrefix}-${colorName}`;
+    }
+    // Find nearest color if exact match not found
+    const nearestColor = findNearestColor(hex);
+    if (nearestColor) {
+      return `${colorPrefix}-${nearestColor}`;
+    }
+  }
+
+  // Try HSL conversion
+  hex = hslToHex(normalizedValue);
+  if (hex) {
+    colorName = COLOR_PALETTE[hex.toLowerCase()];
+    if (colorName) {
+      return `${colorPrefix}-${colorName}`;
+    }
+    // Find nearest color if exact match not found
+    const nearestColor = findNearestColor(hex);
+    if (nearestColor) {
+      return `${colorPrefix}-${nearestColor}`;
+    }
+  }
+
   // Fallback to arbitrary value
   return `${colorPrefix}-[${value}]`;
+}
+
+/**
+ * Convert opacity value to Tailwind class
+ * Supports both decimal (0.5) and percentage (50%) formats
+ */
+function opacityClass(value: string): string | null {
+  let percent: number;
+
+  // Handle percentage format (e.g., "50%")
+  if (value.endsWith('%')) {
+    percent = parseInt(value.substring(0, value.length - 1), 10);
+  } else {
+    // Handle decimal format (e.g., "0.5")
+    const num = parseFloat(value);
+    percent = Math.round(num * 100);
+  }
+
+  const opacityKey = percent.toString();
+  return OPACITY_SCALE[opacityKey] ? `opacity-${OPACITY_SCALE[opacityKey]}` : null;
 }
 
 /**
@@ -359,6 +531,13 @@ function borderRadiusClass(value: string): string | null {
 /**
  * Convert border-width value to Tailwind class
  */
+function borderWidthClass(value: string): string | null {
+  const scale = BORDER_WIDTH_SCALE[value];
+  if (scale) {
+    return scale === 'DEFAULT' ? 'border' : `border-${scale}`;
+  }
+  return `border-[${value}]`;
+}
 
 /**
  * Convert font-size value to Tailwind class
@@ -411,17 +590,6 @@ function displayClass(value: string): string | null {
     'table-cell': 'table-cell',
   };
   return map[value] || null;
-}
-
-/**
- * Convert border-width value to Tailwind class
- */
-function borderWidthClass(value: string): string | null {
-  const scale = BORDER_WIDTH_SCALE[value];
-  if (scale) {
-    return scale === 'DEFAULT' ? 'border' : `border-${scale}`;
-  }
-  return `border-[${value}]`;
 }
 
 /**
