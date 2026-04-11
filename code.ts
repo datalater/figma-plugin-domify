@@ -489,10 +489,26 @@ async function collectTailwindClasses(
       continue;
     }
     const tailwindClass = cssToTailwind(prop, value);
+    if (tailwindClass === '') continue;
     tailwindClasses.push(tailwindClass ?? toArbitraryProperty(prop, value));
   }
 
-  return tailwindClasses;
+  return dedupeClasses(tailwindClasses);
+}
+
+function dedupeClasses(classes: string[]): string[] {
+  const expanded: string[] = [];
+  for (const c of classes) {
+    for (const part of c.split(' ')) {
+      expanded.push(part);
+    }
+  }
+  const seen = new Set<string>();
+  return expanded.filter((c) => {
+    if (seen.has(c)) return false;
+    seen.add(c);
+    return true;
+  });
 }
 
 function resolveLetterSpacing(node: SceneNode): string | null {

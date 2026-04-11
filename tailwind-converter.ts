@@ -343,7 +343,7 @@ export function cssToTailwind(prop: string, value: string): string | null {
   }
 
   if (normalizedProp === 'font-style') {
-    return normalizedValue === 'italic' ? 'italic' : null;
+    return normalizedValue === 'italic' ? 'italic' : '';
   }
 
   // Handle text-transform
