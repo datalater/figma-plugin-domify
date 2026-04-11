@@ -11,8 +11,8 @@
 import {
   SPACING_SCALE,
   COLOR_PALETTE,
-  BORDER_RADIUS_SCALE,
-  FONT_SIZE_SCALE,
+
+
   BORDER_WIDTH_SCALE,
   FONT_WEIGHT_SCALE,
   LINE_HEIGHT_SCALE,
@@ -55,7 +55,7 @@ function hslToHex(hsl: string): string | null {
   const s = parseFloat(match[2]) / 100;
   const l = parseFloat(match[3]) / 100;
 
-  let r, g, b;
+  let r: number, g: number, b: number;
 
   if (s === 0) {
     r = g = b = l;
@@ -128,44 +128,59 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
     : null;
 }
 
-/**
- * Convert a CSS property-value pair to Tailwind utility class(es)
- * Returns null if property cannot be converted
- */
-export function cssToTailwind(prop: string, value: string): string | null {
-  // Normalize property name (remove spaces)
-  const normalizedProp = prop.trim().toLowerCase();
-  const normalizedValue = value.trim();
+function normalizeVar(value: string): string {
+  return value.replace(/var\(\s*([^,]+),\s*/g, 'var($1,');
+}
 
-  // Handle spacing properties (padding, margin, gap)
-  if (['padding', 'margin', 'gap'].includes(normalizedProp)) {
-    return spacingClass(normalizedProp, normalizedValue);
+function arb(prefix: string, value: string): string {
+  return `${prefix}-[${value.replace(/\s+/g, '_')}]`;
+}
+
+export function cssToTailwind(prop: string, value: string): string | null {
+  const normalizedProp = prop.trim().toLowerCase();
+  const normalizedValue = normalizeVar(value.trim());
+
+  if (normalizedProp === 'padding' || normalizedProp === 'margin') {
+    return spacingShorthand(normalizedProp === 'padding' ? 'p' : 'm', normalizedValue);
   }
 
-  // Handle individual padding/margin sides
+  if (normalizedProp === 'gap') {
+    return spacingClass('gap', normalizedValue);
+  }
+
   if (normalizedProp.match(/^(padding|margin)-(top|right|bottom|left)$/)) {
     const prefix = normalizedProp.startsWith('padding') ? 'p' : 'm';
+    const sideMap: Record<string, string> = { top: 't', right: 'r', bottom: 'b', left: 'l' };
     const side = normalizedProp.split('-')[1];
-    const sideMap: Record<string, string> = {
-      top: 't',
-      right: 'r',
-      bottom: 'b',
-      left: 'l',
-    };
-    const spacingResult = spacingClass('', normalizedValue);
-    if (spacingResult) {
-      // Handle negative values: if spacingResult starts with '-', apply it to the whole class
-      if (spacingResult.startsWith('-')) {
-        return `-${prefix}${sideMap[side]}-${spacingResult.substring(1)}`;
-      }
-      return `${prefix}${sideMap[side]}-${spacingResult}`;
-    }
-    return null;
+    return singleSpacing(`${prefix}${sideMap[side]}`, normalizedValue);
   }
 
   // Handle color properties
   if (['background-color', 'color', 'border-color'].includes(normalizedProp)) {
     return colorClass(normalizedProp, normalizedValue);
+  }
+
+  if (normalizedProp === 'background') {
+    return colorClass('background-color', normalizedValue);
+  }
+
+  if (normalizedProp === 'border') {
+    return borderShorthand(normalizedValue);
+  }
+
+  if (normalizedProp.match(/^border-(top|right|bottom|left)$/)) {
+    const side = normalizedProp.split('-')[1];
+    const sideChar: Record<string, string> = { top: 't', right: 'r', bottom: 'b', left: 'l' };
+    return borderSideShorthand(sideChar[side], normalizedValue);
+  }
+
+  if (normalizedProp === 'border-style') {
+    const map: Record<string, string> = {
+      solid: 'border-solid', dashed: 'border-dashed',
+      dotted: 'border-dotted', double: 'border-double',
+      none: 'border-none',
+    };
+    return map[normalizedValue] ?? null;
   }
 
   // Handle border-radius
@@ -215,7 +230,15 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return map[normalizedValue] || null;
   }
 
-  // Handle justify-content
+  if (normalizedProp === 'align-self') {
+    const map: Record<string, string> = {
+      stretch: 'self-stretch', center: 'self-center',
+      'flex-start': 'self-start', 'flex-end': 'self-end',
+      auto: 'self-auto', baseline: 'self-baseline',
+    };
+    return map[normalizedValue] ?? null;
+  }
+
   if (normalizedProp === 'justify-content') {
     const map: Record<string, string> = {
       center: 'justify-center',
@@ -294,7 +317,7 @@ export function cssToTailwind(prop: string, value: string): string | null {
   if (['top', 'right', 'bottom', 'left'].includes(normalizedProp)) {
     if (normalizedValue === '0px' || normalizedValue === '0') return `${normalizedProp}-0`;
     if (normalizedValue === 'auto') return `${normalizedProp}-auto`;
-    return `${normalizedProp}-[${normalizedValue}]`;
+    return arb(normalizedProp, normalizedValue);
   }
 
   // Handle text-align
@@ -319,9 +342,8 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return map[normalizedValue] || null;
   }
 
-  // Handle font-style
   if (normalizedProp === 'font-style') {
-    return normalizedValue === 'italic' ? 'italic' : 'not-italic';
+    return normalizedValue === 'italic' ? 'italic' : null;
   }
 
   // Handle text-transform
@@ -335,27 +357,8 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return map[normalizedValue] || null;
   }
 
-  // Handle letter-spacing
   if (normalizedProp === 'letter-spacing') {
-    const map: Record<string, string> = {
-      '-0.05em': 'tracking-tighter',
-      '-0.025em': 'tracking-tight',
-      '0em': 'tracking-normal',
-      '0.025em': 'tracking-wide',
-      '0.05em': 'tracking-wider',
-      '0.1em': 'tracking-widest',
-    };
-    return map[normalizedValue] || null;
-  }
-
-  // Handle word-spacing
-  if (normalizedProp === 'word-spacing') {
-    return `word-spacing-[${normalizedValue}]`;
-  }
-
-  // Handle border-width
-  if (normalizedProp === 'border-width' || normalizedProp === 'border') {
-    return borderWidthClass(normalizedValue);
+    return arb('tracking', normalizedValue);
   }
 
   // Handle flex-wrap
@@ -370,17 +373,17 @@ export function cssToTailwind(prop: string, value: string): string | null {
 
   // Handle flex-grow
   if (normalizedProp === 'flex-grow') {
-    return normalizedValue === '1' ? 'flex-grow' : `flex-grow-[${normalizedValue}]`;
+    return normalizedValue === '1' ? 'flex-grow' : arb('flex-grow', normalizedValue);
   }
 
   // Handle flex-shrink
   if (normalizedProp === 'flex-shrink') {
-    return normalizedValue === '1' ? 'flex-shrink' : `flex-shrink-[${normalizedValue}]`;
+    return normalizedValue === '1' ? 'flex-shrink' : arb('flex-shrink', normalizedValue);
   }
 
   // Handle flex-basis
   if (normalizedProp === 'flex-basis') {
-    return `flex-basis-[${normalizedValue}]`;
+    return arb('flex-basis', normalizedValue);
   }
 
   // Handle cursor
@@ -431,7 +434,25 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return map[normalizedValue] || null;
   }
 
-  // Property not supported
+  if (normalizedProp === 'box-shadow') {
+    return arb('shadow', normalizedValue);
+  }
+
+  if (normalizedProp === 'aspect-ratio') {
+    if (normalizedValue === '1 / 1' || normalizedValue === '1/1') return 'aspect-square';
+    if (normalizedValue === '16 / 9' || normalizedValue === '16/9') return 'aspect-video';
+    return `aspect-[${normalizedValue.replace(/\s+/g, '')}]`;
+  }
+
+  if (normalizedProp === 'overflow-x' || normalizedProp === 'overflow-y') {
+    const axis = normalizedProp.split('-')[1];
+    const map: Record<string, string> = {
+      hidden: `overflow-${axis}-hidden`, visible: `overflow-${axis}-visible`,
+      auto: `overflow-${axis}-auto`, scroll: `overflow-${axis}-scroll`,
+    };
+    return map[normalizedValue] ?? null;
+  }
+
   return null;
 }
 
@@ -439,6 +460,41 @@ export function cssToTailwind(prop: string, value: string): string | null {
  * Convert spacing value to Tailwind class
  * Handles positive and negative values
  */
+function spacingShorthand(prefix: string, value: string): string {
+  const parts = value.split(/\s+/);
+
+  if (parts.length === 1) {
+    return singleSpacing(prefix, parts[0]);
+  }
+
+  if (parts.length === 2) {
+    const y = singleSpacing(`${prefix}y`, parts[0]);
+    const x = singleSpacing(`${prefix}x`, parts[1]);
+    return `${y} ${x}`;
+  }
+
+  if (parts.length === 3) {
+    const t = singleSpacing(`${prefix}t`, parts[0]);
+    const x = singleSpacing(`${prefix}x`, parts[1]);
+    const b = singleSpacing(`${prefix}b`, parts[2]);
+    return `${t} ${x} ${b}`;
+  }
+
+  const t = singleSpacing(`${prefix}t`, parts[0]);
+  const r = singleSpacing(`${prefix}r`, parts[1]);
+  const b = singleSpacing(`${prefix}b`, parts[2]);
+  const l = singleSpacing(`${prefix}l`, parts[3]);
+  return `${t} ${r} ${b} ${l}`;
+}
+
+function singleSpacing(prefix: string, value: string): string {
+  const isNegative = value.startsWith('-');
+  const abs = isNegative ? value.substring(1) : value;
+  const neg = isNegative ? '-' : '';
+  const scale = SPACING_SCALE[abs];
+  return scale ? `${neg}${prefix}-${scale}` : arb(`${neg}${prefix}`, abs);
+}
+
 function spacingClass(prefix: string, value: string): string | null {
   // Check for negative values
   const isNegative = value.startsWith('-');
@@ -452,27 +508,17 @@ function spacingClass(prefix: string, value: string): string | null {
     const prefixMap: Record<string, string> = {
       'padding': 'p',
       'margin': 'm',
-      'gap': '',  // gap uses just the scale number
+      'gap': 'gap',
     };
     
     const tailwindPrefix = prefixMap[prefix] !== undefined ? prefixMap[prefix] : prefix;
-    
-    if (tailwindPrefix !== '') {
-      return `${negativePrefix}${tailwindPrefix}-${scale}`;
-    } else {
-      // For gap or empty prefix, return just the scale
-      return `${negativePrefix}${scale}`;
-    }
+    return `${negativePrefix}${tailwindPrefix}-${scale}`;
   }
 
   // Fallback to arbitrary value
-  if (prefix === 'gap' || prefix === '') {
-    return isNegative ? `-[${absoluteValue}]` : `[${value}]`;
-  }
-  
-  const tailwindPrefix = { 'padding': 'p', 'margin': 'm' }[prefix] || prefix;
+  const tailwindPrefix = { 'padding': 'p', 'margin': 'm', 'gap': 'gap' }[prefix] || prefix;
   const negativePrefix = isNegative ? '-' : '';
-  return `${negativePrefix}${tailwindPrefix}-[${absoluteValue}]`;
+  return arb(`${negativePrefix}${tailwindPrefix}`, absoluteValue);
 }
 
 /**
@@ -490,36 +536,25 @@ function colorClass(prop: string, value: string): string | null {
     return `${colorPrefix}-${colorName}`;
   }
 
-  // Try RGB conversion
+  // Try RGB conversion → exact palette match only
   let hex = rgbToHex(normalizedValue);
   if (hex) {
     colorName = COLOR_PALETTE[hex.toLowerCase()];
     if (colorName) {
       return `${colorPrefix}-${colorName}`;
     }
-    // Find nearest color if exact match not found
-    const nearestColor = findNearestColor(hex);
-    if (nearestColor) {
-      return `${colorPrefix}-${nearestColor}`;
-    }
   }
 
-  // Try HSL conversion
+  // Try HSL conversion → exact palette match only
   hex = hslToHex(normalizedValue);
   if (hex) {
     colorName = COLOR_PALETTE[hex.toLowerCase()];
     if (colorName) {
       return `${colorPrefix}-${colorName}`;
     }
-    // Find nearest color if exact match not found
-    const nearestColor = findNearestColor(hex);
-    if (nearestColor) {
-      return `${colorPrefix}-${nearestColor}`;
-    }
   }
 
-  // Fallback to arbitrary value
-  return `${colorPrefix}-[${value}]`;
+  return arb(colorPrefix, value);
 }
 
 /**
@@ -545,12 +580,64 @@ function opacityClass(value: string): string | null {
 /**
  * Convert border-radius value to Tailwind class
  */
-function borderRadiusClass(value: string): string | null {
-  const scale = BORDER_RADIUS_SCALE[value];
-  if (scale) {
-    return `rounded-${scale}`;
+function borderShorthand(value: string): string {
+  const classes: string[] = [];
+  const styles = ['solid', 'dashed', 'dotted', 'double', 'none'];
+  const widthMatch = value.match(/^(\d+(?:\.\d+)?px)/);
+  const styleMatch = styles.find((s) => value.includes(s));
+
+  if (widthMatch) {
+    const w = borderWidthClass(widthMatch[1]);
+    if (w) classes.push(w);
   }
-  return `rounded-[${value}]`;
+
+  if (styleMatch) {
+    classes.push(`border-${styleMatch}`);
+  }
+
+  const colorPart = extractBorderColor(value, widthMatch?.[0], styleMatch);
+  if (colorPart) {
+    const mapped = colorClass('border-color', colorPart);
+    if (mapped) classes.push(mapped);
+  }
+
+  return classes.length > 0 ? classes.join(' ') : arb('border', value);
+}
+
+function extractBorderColor(value: string, width?: string, style?: string): string | null {
+  let remaining = value;
+  if (width) remaining = remaining.replace(width, '');
+  if (style) remaining = remaining.replace(style, '');
+  const trimmed = remaining.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function borderSideShorthand(side: string, value: string): string {
+  const classes: string[] = [];
+  const styles = ['solid', 'dashed', 'dotted', 'double', 'none'];
+  const widthMatch = value.match(/^(\d+(?:\.\d+)?px)/);
+  const styleMatch = styles.find((s) => value.includes(s));
+
+  if (widthMatch) {
+    const w = BORDER_WIDTH_SCALE[widthMatch[1]];
+    classes.push(w === 'DEFAULT' ? `border-${side}` : `border-${side}-[${widthMatch[1]}]`);
+  }
+
+  if (styleMatch) {
+    classes.push(`border-${styleMatch}`);
+  }
+
+  const colorPart = extractBorderColor(value, widthMatch?.[0], styleMatch);
+  if (colorPart) {
+    const mapped = colorClass('border-color', colorPart);
+    if (mapped) classes.push(mapped);
+  }
+
+  return classes.length > 0 ? classes.join(' ') : arb(`border-${side}`, value);
+}
+
+function borderRadiusClass(value: string): string | null {
+  return arb('rounded', value);
 }
 
 /**
@@ -561,18 +648,14 @@ function borderWidthClass(value: string): string | null {
   if (scale) {
     return scale === 'DEFAULT' ? 'border' : `border-${scale}`;
   }
-  return `border-[${value}]`;
+  return arb('border', value);
 }
 
 /**
  * Convert font-size value to Tailwind class
  */
 function fontSizeClass(value: string): string | null {
-  const scale = FONT_SIZE_SCALE[value];
-  if (scale) {
-    return `text-${scale}`;
-  }
-  return `text-[${value}]`;
+  return arb('text', value);
 }
 
 /**
@@ -583,7 +666,7 @@ function fontWeightClass(value: string): string | null {
   if (scale) {
     return `font-${scale}`;
   }
-  return `font-[${value}]`;
+  return arb('font', value);
 }
 
 /**
@@ -594,7 +677,7 @@ function lineHeightClass(value: string): string | null {
   if (scale) {
     return `leading-${scale}`;
   }
-  return `leading-[${value}]`;
+  return arb('leading', value);
 }
 
 /**
@@ -669,4 +752,61 @@ export function parseCssString(cssText: string): Record<string, string> {
 export function cssStringToTailwind(cssText: string): string[] {
   const properties = parseCssString(cssText);
   return cssToTailwindClasses(properties);
+}
+
+type TextSegmentStyle = {
+  fontSize: number;
+  fontWeight: number;
+  letterSpacingValue: number;
+  letterSpacingUnit: 'PIXELS' | 'PERCENT';
+  lineHeightValue: number | null;
+  lineHeightUnit: 'PIXELS' | 'PERCENT' | 'AUTO';
+  color: string | null;
+  textDecoration: string;
+  textCase: string;
+  italic: boolean;
+};
+
+export function segmentToTailwind(style: TextSegmentStyle): string[] {
+  const classes: string[] = [];
+
+  classes.push(arb('text', `${style.fontSize}px`));
+
+  const fw = FONT_WEIGHT_SCALE[String(style.fontWeight)];
+  if (fw) classes.push(`font-${fw}`);
+  else classes.push(arb('font', String(style.fontWeight)));
+
+  if (style.color) {
+    const colorName = COLOR_PALETTE[style.color.toLowerCase()];
+    classes.push(colorName ? `text-${colorName}` : arb('text', style.color));
+  }
+
+  if (style.letterSpacingValue !== 0) {
+    if (style.letterSpacingUnit === 'PERCENT') {
+      const em = parseFloat((style.letterSpacingValue / 100).toFixed(4));
+      classes.push(arb('tracking', `${em}em`));
+    } else {
+      classes.push(arb('tracking', `${style.letterSpacingValue}px`));
+    }
+  }
+
+  if (style.lineHeightUnit === 'PIXELS' && style.lineHeightValue !== null) {
+    classes.push(arb('leading', `${style.lineHeightValue}px`));
+  } else if (style.lineHeightUnit === 'PERCENT' && style.lineHeightValue !== null) {
+    classes.push(arb('leading', `${style.lineHeightValue}%`));
+  }
+
+  if (style.italic) classes.push('italic');
+
+  const decoMap: Record<string, string> = {
+    UNDERLINE: 'underline', STRIKETHROUGH: 'line-through',
+  };
+  if (decoMap[style.textDecoration]) classes.push(decoMap[style.textDecoration]);
+
+  const caseMap: Record<string, string> = {
+    UPPER: 'uppercase', LOWER: 'lowercase', TITLE: 'capitalize',
+  };
+  if (caseMap[style.textCase]) classes.push(caseMap[style.textCase]);
+
+  return classes;
 }

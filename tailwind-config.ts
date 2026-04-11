@@ -6,6 +6,7 @@
 // Spacing scale: px → Tailwind class suffix
 // Based on Tailwind v4 default spacing scale (0.25rem = 4px base unit)
 export const SPACING_SCALE: Record<string, string> = {
+  '0': '0',
   '0px': '0',
   '1px': 'px',
   '2px': '0.5',
@@ -302,7 +303,6 @@ export const BORDER_RADIUS_SCALE: Record<string, string> = {
   '16px': '2xl',
   '20px': '3xl',
   '24px': '4xl',
-  '32px': 'full',
 };
 
 // Font size scale: px → Tailwind class suffix
