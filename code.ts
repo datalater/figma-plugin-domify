@@ -592,6 +592,8 @@ async function collectTailwindClasses(
     .map(([prop, val]) => [prop, stripInlineComments(val)] as const);
 
   const tailwindClasses: string[] = [];
+  const nativePadding = resolveNativePadding(node);
+  if (nativePadding) tailwindClasses.push(nativePadding);
   const letterSpacingOverride = resolveLetterSpacing(node);
 
   for (const [prop, value] of cssProperties) {
@@ -625,7 +627,35 @@ function buildSkipProps(node: SceneNode): Set<string> {
       skip.add('max-height');
     }
   }
+  if (hasNativePadding(node)) {
+    skip.add('padding');
+    skip.add('padding-top');
+    skip.add('padding-right');
+    skip.add('padding-bottom');
+    skip.add('padding-left');
+  }
   return skip;
+}
+
+function isAutoLayout(node: SceneNode): boolean {
+  return 'layoutMode' in node && (node as FrameNode).layoutMode !== 'NONE';
+}
+
+function hasNativePadding(node: SceneNode): boolean {
+  return 'paddingTop' in node;
+}
+
+function resolveNativePadding(node: SceneNode): string | null {
+  if (!hasNativePadding(node)) return null;
+  const frame = node as FrameNode;
+  const t = frame.paddingTop ?? 0;
+  const r = frame.paddingRight ?? 0;
+  const b = frame.paddingBottom ?? 0;
+  const l = frame.paddingLeft ?? 0;
+  if (t === 0 && r === 0 && b === 0 && l === 0) return null;
+  if (t === b && r === l && t === r) return cssToTailwind('padding', `${t}px`);
+  if (t === b && r === l) return cssToTailwind('padding', `${t}px ${r}px`);
+  return cssToTailwind('padding', `${t}px ${r}px ${b}px ${l}px`);
 }
 
 function dedupeClasses(classes: string[]): string[] {
