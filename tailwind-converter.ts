@@ -154,6 +154,10 @@ export function cssToTailwind(prop: string, value: string): string | null {
     };
     const spacingResult = spacingClass('', normalizedValue);
     if (spacingResult) {
+      // Handle negative values: if spacingResult starts with '-', apply it to the whole class
+      if (spacingResult.startsWith('-')) {
+        return `-${prefix}${sideMap[side]}-${spacingResult.substring(1)}`;
+      }
       return `${prefix}${sideMap[side]}-${spacingResult}`;
     }
     return null;
@@ -443,11 +447,32 @@ function spacingClass(prefix: string, value: string): string | null {
   const scale = SPACING_SCALE[absoluteValue];
   if (scale) {
     const negativePrefix = isNegative ? '-' : '';
-    return prefix ? `${negativePrefix}${prefix}-${scale}` : `${negativePrefix}${scale}`;
+    
+    // Map property names to Tailwind prefixes
+    const prefixMap: Record<string, string> = {
+      'padding': 'p',
+      'margin': 'm',
+      'gap': '',  // gap uses just the scale number
+    };
+    
+    const tailwindPrefix = prefixMap[prefix] !== undefined ? prefixMap[prefix] : prefix;
+    
+    if (tailwindPrefix !== '') {
+      return `${negativePrefix}${tailwindPrefix}-${scale}`;
+    } else {
+      // For gap or empty prefix, return just the scale
+      return `${negativePrefix}${scale}`;
+    }
   }
 
   // Fallback to arbitrary value
-  return prefix ? `${prefix}-[${value}]` : `[${value}]`;
+  if (prefix === 'gap' || prefix === '') {
+    return isNegative ? `-[${absoluteValue}]` : `[${value}]`;
+  }
+  
+  const tailwindPrefix = { 'padding': 'p', 'margin': 'm' }[prefix] || prefix;
+  const negativePrefix = isNegative ? '-' : '';
+  return `${negativePrefix}${tailwindPrefix}-[${absoluteValue}]`;
 }
 
 /**
