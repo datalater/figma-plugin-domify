@@ -21,6 +21,15 @@
   "codegenPreferences": [
     {
       "itemType": "select",
+      "propertyName": "cssMode",
+      "label": "CSS Mode",
+      "options": [
+        { "label": "Plain CSS", "value": "plain", "isDefault": true },
+        { "label": "Tailwind v4", "value": "tailwind4" }
+      ]
+    },
+    {
+      "itemType": "select",
       "propertyName": "framework",
       "label": "Framework",
       "options": [

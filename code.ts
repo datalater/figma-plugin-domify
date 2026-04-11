@@ -1,3 +1,5 @@
+import { cssStringToTailwind, cssToTailwind, parseCssString } from './tailwind-converter';
+
 const DOMIFY_CONFIG = {
   ignoredProperties: [
     'font-feature-settings',
@@ -52,17 +54,22 @@ type DomifyContext = {
   classNames: Map<string, string>;
   includeDataAttributes: boolean;
   framework: string;
+  cssMode: 'plain' | 'tailwind4';
+  tailwindClasses: Map<string, string[]>;
 };
 
 figma.codegen.on('generate', async (event) => {
   const classNames = buildClassNameMap(event.node);
   const includeDataAttributes = figma.codegen.preferences.customSettings['dataAttributes'] !== 'exclude';
   const framework = figma.codegen.preferences.customSettings['framework'] ?? 'none';
+  const cssMode = figma.codegen.preferences.customSettings['cssMode'] ?? 'plain';
+
   if (framework === 'vue') {
     for (const [id, name] of classNames) {
       classNames.set(id, toCamelCase(name));
     }
   }
+
   const context: DomifyContext = {
     cssMap: new Map<string, Set<string>>(),
     warnings: new Set<string>(),
@@ -70,6 +77,8 @@ figma.codegen.on('generate', async (event) => {
     classNames,
     includeDataAttributes,
     framework,
+    cssMode: cssMode as 'plain' | 'tailwind4',
+    tailwindClasses: new Map<string, string[]>(),
   };
 
   const rootResult = await renderNode(event.node, context, 0);
@@ -80,6 +89,7 @@ figma.codegen.on('generate', async (event) => {
       { title: 'Metadata', language: 'PLAINTEXT', code: '{}' },
     ];
   }
+
   const metadataPayload = {
     generatedAt: new Date().toISOString(),
     plugin: 'domify-mvp',
@@ -89,9 +99,13 @@ figma.codegen.on('generate', async (event) => {
     figmaUrl: toNodeUrl(context.fileUrl, event.node.id),
     warnings: Array.from(context.warnings),
     tree: rootResult.metadata,
+    cssMode: context.cssMode,
   };
 
-  const cssText = formatCssOutput(context.cssMap);
+  const cssText = context.cssMode === 'tailwind4'
+    ? formatTailwindCssOutput(context.cssMap)
+    : formatCssOutput(context.cssMap);
+
   return [
     { title: 'HTML', language: 'HTML', code: rootResult.html },
     { title: 'CSS', language: 'CSS', code: cssText },
@@ -108,13 +122,19 @@ async function renderNode(node: SceneNode, context: DomifyContext, depth: number
 
   const className = context.classNames.get(node.id) ?? toClassName(node.name);
   const metadata = await buildMetadata(node, context.fileUrl);
-  const attrs = toAttributes(node, className, metadata.provenance, metadata.url, context.includeDataAttributes, context.framework);
   const tagName = node.type === 'TEXT' ? 'span' : 'div';
   const textContent = node.type === 'TEXT' ? escapeHtml(node.characters ?? '') : '';
   const children = 'children' in node ? Array.from(node.children) : [];
 
-  await collectCssRule(node, className, context.cssMap);
+  // Collect CSS/Tailwind classes BEFORE building attributes
+  let tailwindClasses: string[] = [];
+  if (context.cssMode === 'tailwind4') {
+    tailwindClasses = await collectTailwindClasses(node, className, context);
+  } else {
+    await collectCssRule(node, className, context.cssMap);
+  }
 
+  const attrs = toAttributes(node, className, metadata.provenance, metadata.url, context.includeDataAttributes, context.framework, context.cssMode, tailwindClasses);
   if (children.length === 0) {
     return {
       html: `${indent(depth)}<${tagName}${attrs}>${textContent}</${tagName}>`,
@@ -152,12 +172,17 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
   const w = 'width' in node && typeof node.width === 'number' ? Math.round(node.width) : 100;
   const h = 'height' in node && typeof node.height === 'number' ? Math.round(node.height) : 100;
 
-  await collectCssRule(node, className, context.cssMap);
+  let tailwindClasses: string[] = [];
+  if (context.cssMode === 'tailwind4') {
+    tailwindClasses = await collectTailwindClasses(node, className, context);
+  } else {
+    await collectCssRule(node, className, context.cssMap);
+  }
 
   try {
     const svgString = await node.exportAsync({ format: 'SVG_STRING' });
     if (svgString.length < SVG_SIZE_THRESHOLD) {
-      const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'svg', context.includeDataAttributes, context.framework);
+      const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'svg', context.includeDataAttributes, context.framework, context.cssMode, tailwindClasses);
       return {
         html: `${indent(depth)}<div${attrs}>\n${indent(depth + 1)}${svgString}\n${indent(depth)}</div>`,
         metadata,
@@ -166,7 +191,7 @@ async function renderAssetNode(node: SceneNode, context: DomifyContext, depth: n
   } catch { /* empty */ }
 
   const placeholderSrc = buildPlaceholderDataUri(node.id, nodeUrl, w, h);
-  const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image', context.includeDataAttributes, context.framework);
+  const attrs = toAssetAttributes(node, className, metadata.provenance, nodeUrl, 'image', context.includeDataAttributes, context.framework, context.cssMode, tailwindClasses);
   return {
     html: `${indent(depth)}<img${attrs} src="${placeholderSrc}" alt="asset:${escapeHtml(node.id)}" width="${w}" height="${h}" />`,
     metadata,
@@ -181,8 +206,10 @@ function toAssetAttributes(
   assetType: 'svg' | 'image',
   includeDataAttributes: boolean,
   framework: string,
+  cssMode: string,
+  tailwindClasses: string[] = [],
 ): string {
-  const base = toAttributes(node, className, provenance, nodeUrl, includeDataAttributes, framework);
+  const base = toAttributes(node, className, provenance, nodeUrl, includeDataAttributes, framework, cssMode, tailwindClasses);
   if (includeDataAttributes) {
     return `${base} data-figma-asset="${assetType}"`;
   }
@@ -230,6 +257,38 @@ async function collectCssRule(node: SceneNode, className: string, cssMap: Map<st
   }
 }
 
+async function collectTailwindClasses(node: SceneNode, className: string, context: DomifyContext): Promise<string[]> {
+  const nodeCss = await node.getCSSAsync();
+  const cssProperties = Object.entries(nodeCss)
+    .filter(([prop]) => !DOMIFY_CONFIG.ignoredProperties.includes(prop))
+    .map(([prop, val]) => [prop, stripInlineComments(val)] as const);
+
+  const tailwindClasses: string[] = [];
+  const unmappedProperties: Array<[string, string]> = [];
+
+  for (const [prop, value] of cssProperties) {
+    const tailwindClass = cssToTailwind(prop, value);
+    if (tailwindClass) {
+      tailwindClasses.push(tailwindClass);
+    } else {
+      unmappedProperties.push([prop, value]);
+    }
+  }
+
+  // Store Tailwind classes for this node
+  if (tailwindClasses.length > 0) {
+    context.tailwindClasses.set(className, tailwindClasses);
+  }
+
+  // Store unmapped properties as fallback CSS
+  if (unmappedProperties.length > 0) {
+    const declarations = unmappedProperties.map(([prop, val]) => `  ${prop}: ${val};`).join('\n');
+    addCssEntry(context.cssMap, `.${className}`, declarations);
+  }
+
+  return tailwindClasses;
+}
+
 function addCssEntry(cssMap: Map<string, Set<string>>, selector: string, declarations: string): void {
   const existing = cssMap.get(declarations);
   if (existing) {
@@ -247,6 +306,16 @@ function formatCssOutput(cssMap: Map<string, Set<string>>): string {
   }
   const text = rules.join('\n\n').trim();
   return text.length > 0 ? text : '/* No CSS emitted. */';
+}
+
+function formatTailwindCssOutput(cssMap: Map<string, Set<string>>): string {
+  const rules: string[] = [];
+  for (const [declarations, selectors] of cssMap) {
+    const selectorStr = Array.from(selectors).join(',\n');
+    rules.push(`${selectorStr} {\n${declarations}\n}`);
+  }
+  const text = rules.join('\n\n').trim();
+  return text.length > 0 ? text : '/* All styles mapped to Tailwind utilities. */';
 }
 
 function extractNegativeGap(
@@ -270,10 +339,19 @@ function toAttributes(
   nodeUrl: string | null,
   includeDataAttributes: boolean,
   framework: string,
+  cssMode: string,
+  tailwindClasses: string[] = [],
 ): string {
+  let classValue = className;
+  
+  // In Tailwind mode, combine className with Tailwind utility classes
+  if (cssMode === 'tailwind4' && tailwindClasses.length > 0) {
+    classValue = `${className} ${tailwindClasses.join(' ')}`;
+  }
+  
   const classAttr = framework === 'vue'
-    ? `:class="$style.${className}"`
-    : `class="${className}"`;
+    ? `:class="$style.${classValue}"`
+    : `class="${classValue}"`;
   const attrs: string[] = [classAttr];
 
   if (includeDataAttributes) {
@@ -286,6 +364,10 @@ function toAttributes(
       if (provenance.mainComponentId) attrs.push(`data-figma-main-component-id="${escapeHtml(provenance.mainComponentId)}"`);
       if (provenance.mainComponentKey) attrs.push(`data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`);
     }
+  }
+
+  if (cssMode === 'tailwind4') {
+    attrs.push(`data-css-mode="tailwind4"`);
   }
 
   return ` ${attrs.join(' ')}`;
