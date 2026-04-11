@@ -29,7 +29,9 @@
   }
   .tag-item .node-name { color: #888; }
   .tag-item .component-name { font-weight: 600; color: #0078FF; }
-  .tag-item .remove { cursor: pointer; color: #ccc; font-size: 14px; }
+  .tag-item .info { cursor: pointer; flex: 1; }
+  .tag-item .info:hover .node-name { color: #0078FF; }
+  .tag-item .remove { cursor: pointer; color: #ccc; font-size: 14px; flex-shrink: 0; }
   .tag-item .remove:hover { color: #F44336; }
   .empty { color: #bbb; font-size: 11px; font-style: italic; padding: 8px 0; }
   .no-selection { color: #bbb; font-size: 12px; padding: 12px; text-align: center; }
@@ -111,12 +113,18 @@
       }
       tagList.innerHTML = msg.tags.map(t => `
         <div class="tag-item">
-          <span><span class="node-name">${t.nodeName}</span> → <span class="component-name">${t.componentName}</span></span>
+          <span class="info" data-id="${t.nodeId}"><span class="node-name">${t.nodeName}</span> → <span class="component-name">${t.componentName}</span></span>
           <span class="remove" data-id="${t.nodeId}">✕</span>
         </div>
       `).join('');
-      tagList.querySelectorAll('.remove').forEach(el => {
+      tagList.querySelectorAll('.info').forEach(el => {
         el.onclick = () => {
+          parent.postMessage({ pluginMessage: { type: 'navigate', nodeId: el.dataset.id } }, '*');
+        };
+      });
+      tagList.querySelectorAll('.remove').forEach(el => {
+        el.onclick = (e) => {
+          e.stopPropagation();
           parent.postMessage({ pluginMessage: { type: 'remove-tag', nodeId: el.dataset.id } }, '*');
         };
       });

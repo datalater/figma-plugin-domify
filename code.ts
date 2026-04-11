@@ -84,6 +84,14 @@ async function handleUIMessage(msg: { type: string; nodeId?: string; name?: stri
     }
   }
 
+  if (msg.type === 'navigate' && msg.nodeId) {
+    const node = await figma.getNodeByIdAsync(msg.nodeId);
+    if (node) {
+      figma.currentPage.selection = [node as SceneNode];
+      figma.viewport.scrollAndZoomIntoView([node as SceneNode]);
+    }
+  }
+
   if (msg.type === 'remove-tag' && msg.nodeId) {
     const node = await figma.getNodeByIdAsync(msg.nodeId);
     if (node) {
