@@ -346,11 +346,17 @@ function toAttributes(
   
   // In Tailwind mode, combine className with Tailwind utility classes
   if (cssMode === 'tailwind4' && tailwindClasses.length > 0) {
-    classValue = `${className} ${tailwindClasses.join(' ')}`;
+    if (framework === 'vue') {
+      // Vue: use array syntax for multiple classes
+      classValue = `[$style.${className}, '${tailwindClasses.join("', '")}']`;
+    } else {
+      // Plain HTML: space-separated classes
+      classValue = `${className} ${tailwindClasses.join(' ')}`;
+    }
   }
   
   const classAttr = framework === 'vue'
-    ? `:class="$style.${classValue}"`
+    ? `:class="${classValue}"`
     : `class="${classValue}"`;
   const attrs: string[] = [classAttr];
 

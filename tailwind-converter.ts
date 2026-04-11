@@ -51,6 +51,11 @@ export function cssToTailwind(prop: string, value: string): string | null {
     return borderRadiusClass(normalizedValue);
   }
 
+  // Handle border-width
+  if (normalizedProp === "border-width") {
+    return borderWidthClass(normalizedValue);
+  }
+
   // Handle font-size
   if (normalizedProp === 'font-size') {
     return fontSizeClass(normalizedValue);
@@ -352,6 +357,10 @@ function borderRadiusClass(value: string): string | null {
 }
 
 /**
+ * Convert border-width value to Tailwind class
+ */
+
+/**
  * Convert font-size value to Tailwind class
  */
 function fontSizeClass(value: string): string | null {
@@ -370,7 +379,7 @@ function fontWeightClass(value: string): string | null {
   if (scale) {
     return `font-${scale}`;
   }
-  return null;
+  return `font-[${value}]`;
 }
 
 /**
