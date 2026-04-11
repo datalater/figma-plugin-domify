@@ -113,7 +113,7 @@ echo "✓ Plugin ready for testing"
 **Test 1.14: Multiple Properties**
 - Create a rectangle with `margin: 8px; padding: 16px; background-color: #3b82f6; border-radius: 4px`
 - Run plugin
-- Expected output: `m-2 p-4 bg-blue-500 rounded` classes
+- Expected output: `m-2 p-4 bg-blue-500 rounded-base` classes
 - ✓ Pass / ✗ Fail
 
 #### Test Group 2: Edge Cases (5 tests)
