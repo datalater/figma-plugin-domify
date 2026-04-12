@@ -62,6 +62,8 @@ type DomifyContext = {
   framework: string;
   cssMode: "plain" | "tailwind4";
   componentDepth: "expandAll" | "collapseTagged";
+  showAnnotations: boolean;
+  categoryMap: Map<string, string>;
 };
 
 const PLUGIN_DATA_KEY = 'componentName';
@@ -218,6 +220,15 @@ figma.codegen.on("generate", async (event) => {
   const cssMode = s["cssMode"] ?? "plain";
   const dataPreset = s["dataAttributes"] ?? "all";
   const componentDepth = (s["componentDepth"] ?? "expandAll") as "expandAll" | "collapseTagged";
+  const showAnnotations = (s["annotations"] ?? "show") !== "hide";
+
+  const categoryMap = new Map<string, string>();
+  if (showAnnotations) {
+    const categories = await figma.annotations.getAnnotationCategoriesAsync();
+    for (const cat of categories) {
+      categoryMap.set(cat.id, cat.label);
+    }
+  }
 
   if (framework === "vue") {
     for (const [id, name] of classNames) {
@@ -234,6 +245,8 @@ figma.codegen.on("generate", async (event) => {
     framework,
     cssMode: cssMode as "plain" | "tailwind4",
     componentDepth,
+    showAnnotations,
+    categoryMap,
   };
 
   const rootResult = await renderNode(event.node, context, 0);
@@ -285,17 +298,26 @@ async function renderNode(
 ): Promise<DomifyRenderResult | null> {
   if (!node.visible) return null;
 
+  const annotationPrefix = formatAnnotationComments(node, context, depth);
+
   if ("isAsset" in node && node.isAsset) {
-    return renderAssetNode(node, context, depth);
+    const result = await renderAssetNode(node, context, depth);
+    if (result && annotationPrefix) {
+      result.html = `${annotationPrefix}${result.html}`;
+    }
+    return result;
   }
 
   const className = context.classNames.get(node.id) ?? toClassName(node.name);
   const metadata = await buildMetadata(node, context.fileUrl);
 
   if (node.type === "TEXT") {
-    return renderTextNode(node, className, metadata, context, depth);
+    const result = await renderTextNode(node, className, metadata, context, depth);
+    if (annotationPrefix) {
+      result.html = `${annotationPrefix}${result.html}`;
+    }
+    return result;
   }
-
   const isTaggedComponent = !!node.getPluginData(PLUGIN_DATA_KEY);
   const shouldCollapse = depth > 0 && context.componentDepth === "collapseTagged" && isTaggedComponent;
   const children = shouldCollapse ? [] : ("children" in node ? Array.from(node.children) : []);
@@ -320,12 +342,12 @@ async function renderNode(
   if (children.length === 0) {
     if (shouldCollapse) {
       return {
-        html: `${indent(depth)}<div${attrs}>\n${indent(depth + 1)}<!-- children collapsed -->\n${indent(depth)}</div>`,
+        html: `${annotationPrefix}${indent(depth)}<div${attrs}>\n${indent(depth + 1)}<!-- children collapsed -->\n${indent(depth)}</div>`,
         metadata,
       };
     }
     return {
-      html: `${indent(depth)}<div${attrs}></div>`,
+      html: `${annotationPrefix}${indent(depth)}<div${attrs}></div>`,
       metadata,
     };
   }
@@ -339,13 +361,13 @@ async function renderNode(
 
   if (renderedChildren.length === 0) {
     return {
-      html: `${indent(depth)}<div${attrs}></div>`,
+      html: `${annotationPrefix}${indent(depth)}<div${attrs}></div>`,
       metadata,
     };
   }
 
   return {
-    html: `${indent(depth)}<div${attrs}>\n${renderedChildren.map((c) => c.html).join("\n")}\n${indent(depth)}</div>`,
+    html: `${annotationPrefix}${indent(depth)}<div${attrs}>\n${renderedChildren.map((c) => c.html).join("\n")}\n${indent(depth)}</div>`,
     metadata: {
       ...metadata,
       children: renderedChildren.map((c) => c.metadata),
@@ -961,6 +983,29 @@ function getSafeFileKey(): string | null {
   } catch {
     return null;
   }
+}
+
+function formatAnnotationComments(node: SceneNode, context: DomifyContext, depth: number): string {
+  if (!context.showAnnotations) return '';
+  if (!('annotations' in node)) return '';
+  const annotations = (node as SceneNode & { annotations: readonly Annotation[] }).annotations;
+  if (!annotations || annotations.length === 0) return '';
+
+  const lines: string[] = [];
+  for (const ann of annotations) {
+    const text = ann.labelMarkdown ?? ann.label ?? '';
+    if (!text) continue;
+    const category = ann.categoryId ? context.categoryMap.get(ann.categoryId) : null;
+    const prefix = category ? `@annotation(${category})` : '@annotation';
+    const isMultiLine = text.includes('\n');
+    if (isMultiLine) {
+      const indented = text.split('\n').map(l => `${indent(depth + 1)}${l}`).join('\n');
+      lines.push(`${indent(depth)}<!--\n${indent(depth + 1)}${prefix}:\n${indented}\n${indent(depth)}-->`);
+    } else {
+      lines.push(`${indent(depth)}<!-- ${prefix}: ${text} -->`);
+    }
+  }
+  return lines.length > 0 ? lines.join('\n') + '\n' : '';
 }
 
 function indent(depth: number): string {

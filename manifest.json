@@ -51,6 +51,15 @@
     },
     {
       "itemType": "select",
+      "propertyName": "annotations",
+      "label": "Annotations",
+      "options": [
+        { "label": "Show", "value": "show", "isDefault": true },
+        { "label": "Hide", "value": "hide" }
+      ]
+    },
+    {
+      "itemType": "select",
       "propertyName": "componentDepth",
       "label": "Component Depth",
       "options": [
