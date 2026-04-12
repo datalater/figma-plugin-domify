@@ -65,10 +65,11 @@ type DomifyContext = {
 };
 
 const PLUGIN_DATA_KEY = 'componentName';
+const PLUGIN_SCOPE_KEY = 'componentScope';
 
 figma.codegen.on('preferenceschange', async (event) => {
   if (event.propertyName === 'tagComponents') {
-    figma.showUI(__html__, { visible: true, width: 280, height: 360 });
+    figma.showUI(__html__, { visible: true, width: 300, height: 360 });
     figma.on('selectionchange', () => sendSelectionInfo());
     figma.ui.onmessage = handleUIMessage;
     sendSelectionInfo();
@@ -81,7 +82,7 @@ figma.codegen.on('preferenceschange', async (event) => {
 
 initCodegen();
 
-async function handleUIMessage(msg: { type: string; nodeId?: string; name?: string }): Promise<void> {
+async function handleUIMessage(msg: { type: string; nodeId?: string; name?: string; scoped?: boolean }): Promise<void> {
   if (msg.type === 'init') {
     sendSelectionInfo();
     sendTagList();
@@ -91,6 +92,9 @@ async function handleUIMessage(msg: { type: string; nodeId?: string; name?: stri
     const node = await figma.getNodeByIdAsync(msg.nodeId);
     if (node) {
       (node as SceneNode).setPluginData(PLUGIN_DATA_KEY, msg.name);
+      const ancestor = findNearestTaggedAncestor(node);
+      const scopeValue = msg.scoped && ancestor ? ancestor.nodeId : '';
+      (node as SceneNode).setPluginData(PLUGIN_SCOPE_KEY, scopeValue);
       sendSelectionInfo();
       sendTagList();
       figma.codegen.refresh();
@@ -109,6 +113,7 @@ async function handleUIMessage(msg: { type: string; nodeId?: string; name?: stri
     const node = await figma.getNodeByIdAsync(msg.nodeId);
     if (node) {
       (node as SceneNode).setPluginData(PLUGIN_DATA_KEY, '');
+      (node as SceneNode).setPluginData(PLUGIN_SCOPE_KEY, '');
       sendSelectionInfo();
       sendTagList();
       figma.codegen.refresh();
@@ -123,6 +128,7 @@ function sendSelectionInfo(): void {
     return;
   }
   const node = sel[0];
+  const ancestor = findNearestTaggedAncestor(node);
   figma.ui.postMessage({
     type: 'selection',
     node: {
@@ -130,24 +136,39 @@ function sendSelectionInfo(): void {
       name: node.name,
       type: node.type,
       tag: node.getPluginData(PLUGIN_DATA_KEY) || null,
+      scoped: node.getPluginData(PLUGIN_SCOPE_KEY) || null,
+      ancestor,
     },
   });
 }
 
+type TagEntry = {
+  nodeId: string;
+  nodeName: string;
+  componentName: string;
+  scopeParentId: string | null;
+};
+
 function sendTagList(): void {
-  const tags: Array<{ nodeId: string; nodeName: string; componentName: string }> = [];
+  const tags: TagEntry[] = [];
   collectTags(figma.currentPage, tags);
   figma.ui.postMessage({ type: 'tag-list', tags });
 }
 
 function collectTags(
   node: BaseNode,
-  tags: Array<{ nodeId: string; nodeName: string; componentName: string }>,
+  tags: TagEntry[],
 ): void {
   if ('getPluginData' in node) {
     const tag = (node as SceneNode).getPluginData(PLUGIN_DATA_KEY);
     if (tag) {
-      tags.push({ nodeId: node.id, nodeName: node.name, componentName: tag });
+      const scope = (node as SceneNode).getPluginData(PLUGIN_SCOPE_KEY);
+      tags.push({
+        nodeId: node.id,
+        nodeName: node.name,
+        componentName: tag,
+        scopeParentId: scope || null,
+      });
     }
   }
   if ('children' in node) {
@@ -155,6 +176,20 @@ function collectTags(
       collectTags(child, tags);
     }
   }
+}
+
+function findNearestTaggedAncestor(node: BaseNode): { nodeId: string; componentName: string } | null {
+  let current = node.parent;
+  while (current) {
+    if ('getPluginData' in current) {
+      const tag = (current as SceneNode).getPluginData(PLUGIN_DATA_KEY);
+      if (tag) {
+        return { nodeId: current.id, componentName: tag };
+      }
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 function buildDataAttrConfig(preset: string): DataAttrConfig {
