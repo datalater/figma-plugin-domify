@@ -61,6 +61,7 @@ type DomifyContext = {
   dataAttrs: DataAttrConfig;
   framework: string;
   cssMode: "plain" | "tailwind4";
+  componentDepth: "expandAll" | "collapseTagged";
 };
 
 const PLUGIN_DATA_KEY = 'componentName';
@@ -72,6 +73,9 @@ figma.codegen.on('preferenceschange', async (event) => {
     figma.ui.onmessage = handleUIMessage;
     sendSelectionInfo();
     sendTagList();
+  }
+  if (event.propertyName === 'componentDepth') {
+    figma.codegen.refresh();
   }
 });
 
@@ -170,6 +174,7 @@ figma.codegen.on("generate", async (event) => {
   const framework = s["framework"] ?? "none";
   const cssMode = s["cssMode"] ?? "plain";
   const dataPreset = s["dataAttributes"] ?? "all";
+  const componentDepth = (s["componentDepth"] ?? "expandAll") as "expandAll" | "collapseTagged";
 
   if (framework === "vue") {
     for (const [id, name] of classNames) {
@@ -185,6 +190,7 @@ figma.codegen.on("generate", async (event) => {
     dataAttrs: buildDataAttrConfig(dataPreset),
     framework,
     cssMode: cssMode as "plain" | "tailwind4",
+    componentDepth,
   };
 
   const rootResult = await renderNode(event.node, context, 0);
@@ -247,7 +253,9 @@ async function renderNode(
     return renderTextNode(node, className, metadata, context, depth);
   }
 
-  const children = "children" in node ? Array.from(node.children) : [];
+  const isTaggedComponent = !!node.getPluginData(PLUGIN_DATA_KEY);
+  const shouldCollapse = depth > 0 && context.componentDepth === "collapseTagged" && isTaggedComponent;
+  const children = shouldCollapse ? [] : ("children" in node ? Array.from(node.children) : []);
 
   let tailwindClasses: string[] = [];
   if (context.cssMode === "tailwind4") {
@@ -267,6 +275,12 @@ async function renderNode(
     tailwindClasses,
   );
   if (children.length === 0) {
+    if (shouldCollapse) {
+      return {
+        html: `${indent(depth)}<div${attrs}>\n${indent(depth + 1)}<!-- children collapsed -->\n${indent(depth)}</div>`,
+        metadata,
+      };
+    }
     return {
       html: `${indent(depth)}<div${attrs}></div>`,
       metadata,

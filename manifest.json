@@ -49,6 +49,15 @@
       ]
     },
     {
+      "itemType": "select",
+      "propertyName": "componentDepth",
+      "label": "Component Depth",
+      "options": [
+        { "label": "Expand All", "value": "expandAll" },
+        { "label": "Collapse Tagged Components", "value": "collapseTagged", "isDefault": true }
+      ]
+    },
+    {
       "itemType": "action",
       "propertyName": "tagComponents",
       "label": "Tag Components"
