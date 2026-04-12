@@ -55,6 +55,7 @@
   }
   .tag-toolbar select:focus { border-color: #0078FF; }
   .tag-count { font-size: 10px; color: #bbb; font-weight: 400; margin-left: 4px; }
+  .tag-group-header { font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.3px; padding: 6px 4px 2px; margin-top: 4px; border-bottom: 1px solid #eee; }
   .empty { color: #bbb; font-size: 11px; font-style: italic; padding: 8px 0; }
   .no-selection { color: #bbb; font-size: 12px; padding: 12px; text-align: center; }
 </style>
@@ -158,14 +159,39 @@
     }
 
     let html = '';
-    for (const t of topLevel) {
-      html += renderTagItem(t, false);
-      const children = scopeMap[t.nodeId] || [];
-      if (sortByName) children.sort((a, b) => a.componentName.localeCompare(b.componentName));
-      for (const c of children) {
-        html += renderTagItem(c, true);
+
+    if (!sortByName) {
+      const groups = [];
+      const groupMap = {};
+      for (const t of topLevel) {
+        const key = t.topLevelLayerName || '(unknown)';
+        if (!groupMap[key]) {
+          groupMap[key] = [];
+          groups.push(key);
+        }
+        groupMap[key].push(t);
+      }
+      for (const group of groups) {
+        html += `<div class="tag-group-header">${group}</div>`;
+        for (const t of groupMap[group]) {
+          html += renderTagItem(t, false);
+          const children = scopeMap[t.nodeId] || [];
+          for (const c of children) {
+            html += renderTagItem(c, true);
+          }
+        }
+      }
+    } else {
+      for (const t of topLevel) {
+        html += renderTagItem(t, false);
+        const children = scopeMap[t.nodeId] || [];
+        children.sort((a, b) => a.componentName.localeCompare(b.componentName));
+        for (const c of children) {
+          html += renderTagItem(c, true);
+        }
       }
     }
+
     const orphanScoped = scoped.filter(t => !topLevel.some(p => p.nodeId === t.scopeParentId));
     if (sortByName) orphanScoped.sort((a, b) => a.componentName.localeCompare(b.componentName));
     for (const t of orphanScoped) {

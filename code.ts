@@ -157,6 +157,7 @@ type TagEntry = {
   nodeName: string;
   componentName: string;
   scopeParentId: string | null;
+  topLevelLayerName: string;
 };
 
 function sendTagList(): void {
@@ -178,6 +179,7 @@ function collectTags(
         nodeName: node.name,
         componentName: tag,
         scopeParentId: scope || null,
+        topLevelLayerName: findTopLevelLayerName(node),
       });
     }
   }
@@ -186,6 +188,14 @@ function collectTags(
       collectTags(child, tags);
     }
   }
+}
+
+function findTopLevelLayerName(node: BaseNode): string {
+  let current: BaseNode = node;
+  while (current.parent && current.parent.type !== 'PAGE') {
+    current = current.parent;
+  }
+  return current.name;
 }
 
 function findNearestTaggedAncestor(node: BaseNode): { nodeId: string; componentName: string } | null {
