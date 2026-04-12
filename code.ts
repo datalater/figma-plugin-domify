@@ -67,13 +67,21 @@ type DomifyContext = {
 const PLUGIN_DATA_KEY = 'componentName';
 const PLUGIN_SCOPE_KEY = 'componentScope';
 
+function showTagUI(): void {
+  figma.showUI(__html__, { visible: true, width: 300, height: 360 });
+  figma.on('selectionchange', () => sendSelectionInfo());
+  figma.ui.onmessage = handleUIMessage;
+  sendSelectionInfo();
+  sendTagList();
+}
+
+if (figma.mode === 'inspect') {
+  showTagUI();
+}
+
 figma.codegen.on('preferenceschange', async (event) => {
   if (event.propertyName === 'tagComponents') {
-    figma.showUI(__html__, { visible: true, width: 300, height: 360 });
-    figma.on('selectionchange', () => sendSelectionInfo());
-    figma.ui.onmessage = handleUIMessage;
-    sendSelectionInfo();
-    sendTagList();
+    showTagUI();
   }
   if (event.propertyName === 'componentDepth') {
     figma.codegen.refresh();

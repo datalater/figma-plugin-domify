@@ -4,7 +4,8 @@
   "api": "1.0.0",
   "main": "code.js",
   "capabilities": [
-    "codegen"
+    "codegen",
+    "inspect"
   ],
   "enableProposedApi": false,
   "documentAccess": "dynamic-page",
