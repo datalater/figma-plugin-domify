@@ -7,6 +7,9 @@
   .selected-node .name { font-weight: 600; font-size: 13px; }
   .selected-node .type { font-size: 11px; color: #888; }
   .selected-node .current-tag { margin-top: 4px; font-size: 11px; color: #0078FF; }
+  .selected-node .actions { margin-top: 6px; }
+  .btn-small { padding: 3px 8px; font-size: 10px; background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 3px; }
+  .btn-small:hover { background: #e4e4e4; color: #333; }
   .tag-form { display: flex; gap: 6px; margin-bottom: 8px; }
   .tag-form input {
     flex: 1; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;
@@ -210,8 +213,14 @@
             <div class="name">${msg.node.name}</div>
             <div class="type">${msg.node.type} · ${msg.node.id}</div>
             ${tagHtml}
+            <div class="actions">
+              <button type="button" class="btn-small" id="goto-btn">Go to node</button>
+            </div>
           </div>
         `;
+        document.getElementById('goto-btn').onclick = () => {
+          parent.postMessage({ pluginMessage: { type: 'navigate', nodeId: currentNodeId } }, '*');
+        };
         tagSection.style.display = '';
         tagInput.value = msg.node.tag || '';
         if (currentAncestor) {
