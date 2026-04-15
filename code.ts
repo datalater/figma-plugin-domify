@@ -55,6 +55,7 @@ type DataAttrConfig = {
   url: boolean;
   provenance: boolean;
   figmaComponent: boolean;
+  textStyle: boolean;
 };
 
 type DomifyContext = {
@@ -218,12 +219,12 @@ function findNearestTaggedAncestor(node: BaseNode): { nodeId: string; componentN
 
 function buildDataAttrConfig(preset: string): DataAttrConfig {
   if (preset === 'none') {
-    return { component: false, nodeName: false, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: false };
+    return { component: false, nodeName: false, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: false, textStyle: false };
   }
   if (preset === 'minimal') {
-    return { component: true, nodeName: true, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: true };
+    return { component: true, nodeName: true, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: true, textStyle: true };
   }
-  return { component: true, nodeName: true, nodeId: true, nodeType: true, url: true, provenance: true, figmaComponent: true };
+  return { component: true, nodeName: true, nodeId: true, nodeType: true, url: true, provenance: true, figmaComponent: true, textStyle: true };
 }
 
 function initCodegen(): void {
@@ -392,6 +393,7 @@ async function renderNode(
 const SEGMENT_FIELDS = [
   'fontSize', 'fontName', 'fontWeight', 'fills',
   'letterSpacing', 'lineHeight', 'textDecoration', 'textCase',
+  'textStyleId',
 ] as const;
 
 async function renderTextNode(
@@ -424,6 +426,7 @@ type TextSegment = {
   lineHeight: LineHeight;
   textDecoration: TextDecoration;
   textCase: TextCase;
+  textStyleId: string;
 };
 
 async function renderTextNodePlain(
@@ -434,8 +437,9 @@ async function renderTextNodePlain(
   depth: number,
 ): Promise<DomifyRenderResult> {
   await collectCssRule(node, className, context.cssMap);
+  const textStyleName = await resolveNodeTextStyleName(node);
   const attrs = toAttributes(node, className, metadata.provenance, metadata.url,
-    context.dataAttrs, context.framework, context.cssMode, []);
+    context.dataAttrs, context.framework, context.cssMode, [], textStyleName);
   return {
     html: `${indent(depth)}<span${attrs}>${escapeHtml(node.characters ?? '')}</span>`,
     metadata,
@@ -450,28 +454,35 @@ async function renderTextNodeSingle(
   depth: number,
 ): Promise<DomifyRenderResult> {
   const tailwindClasses = await collectTailwindClasses(node, className, context);
+  const textStyleName = await resolveNodeTextStyleName(node);
   const attrs = toAttributes(node, className, metadata.provenance, metadata.url,
-    context.dataAttrs, context.framework, context.cssMode, tailwindClasses);
+    context.dataAttrs, context.framework, context.cssMode, tailwindClasses, textStyleName);
   return {
     html: `${indent(depth)}<span${attrs}>${escapeHtml(node.characters ?? '')}</span>`,
     metadata,
   };
 }
 
-function renderTextNodeMixed(
+async function renderTextNodeMixed(
   node: TextNode,
   className: string,
   metadata: DomifyMetadataNode,
   context: DomifyContext,
   depth: number,
   segments: TextSegment[],
-): DomifyRenderResult {
+): Promise<DomifyRenderResult> {
+  const styleNameMap = await resolveSegmentTextStyles(context, segments);
+
   const spanLines = segments.map((seg) => {
     const style = extractSegmentStyle(seg);
     const classes = segmentToTailwind(style);
     const classAttrName = context.framework === 'react' ? 'className' : 'class';
     const classAttr = classes.length > 0 ? ` ${classAttrName}="${classes.join(' ')}"` : '';
-    return `${indent(depth + 1)}<span${classAttr}>${escapeHtml(seg.characters)}</span>`;
+    const textStyleName = styleNameMap.get(seg.textStyleId);
+    const textStyleAttr = textStyleName
+      ? ` data-figma-text-style="${escapeHtml(textStyleName)}"`
+      : '';
+    return `${indent(depth + 1)}<span${textStyleAttr}${classAttr}>${escapeHtml(seg.characters)}</span>`;
   });
 
   const wrapperAttrs = toAttributes(node, className, metadata.provenance, metadata.url,
@@ -481,6 +492,21 @@ function renderTextNodeMixed(
     html: `${indent(depth)}<span${wrapperAttrs}>\n${spanLines.join('\n')}\n${indent(depth)}</span>`,
     metadata,
   };
+}
+
+async function resolveSegmentTextStyles(
+  context: DomifyContext,
+  segments: TextSegment[],
+): Promise<Map<string, string>> {
+  const styleNameMap = new Map<string, string>();
+  if (!context.dataAttrs.textStyle) return styleNameMap;
+
+  const uniqueIds = [...new Set(segments.map(s => s.textStyleId).filter(Boolean))];
+  await Promise.all(uniqueIds.map(async (id) => {
+    const name = await resolveTextStyleName(id);
+    if (name) styleNameMap.set(id, name);
+  }));
+  return styleNameMap;
 }
 
 function extractSegmentStyle(seg: TextSegment) {
@@ -831,6 +857,17 @@ function stripInlineComments(value: string): string {
   return value.replace(/\s*\/\*[^*]*\*\/\s*/g, " ").trim();
 }
 
+async function resolveTextStyleName(styleId: string): Promise<string | null> {
+  const style = await figma.getStyleByIdAsync(styleId);
+  return style?.name ?? null;
+}
+
+async function resolveNodeTextStyleName(node: TextNode): Promise<string | null> {
+  const styleId = node.textStyleId;
+  if (typeof styleId !== 'string' || !styleId) return null;
+  return resolveTextStyleName(styleId);
+}
+
 function toAttributes(
   node: SceneNode,
   className: string,
@@ -840,6 +877,7 @@ function toAttributes(
   framework: string,
   cssMode: string,
   tailwindClasses: string[] = [],
+  textStyleName?: string | null,
 ): string {
   const dataAttrList: string[] = [];
   const otherAttrs: string[] = [];
@@ -890,6 +928,10 @@ function toAttributes(
       if (provenance.mainComponentKey)
         dataAttrList.push(`data-figma-main-component-key="${escapeHtml(provenance.mainComponentKey)}"`);
     }
+  }
+
+  if (dataAttrs.textStyle && textStyleName) {
+    dataAttrList.push(`data-figma-text-style="${escapeHtml(textStyleName)}"`);
   }
 
   const classAttrName = framework === "react" ? "className" : "class";
