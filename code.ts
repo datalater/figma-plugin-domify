@@ -24,8 +24,11 @@ type DomifyNodeType =
 
 type DomifyProvenance = {
   isInstance: boolean;
+  isDefinition: boolean;
   mainComponentId: string | null;
   mainComponentKey: string | null;
+  mainComponentName: string | null;
+  componentProps: Record<string, string | boolean> | null;
   componentKey: string | null;
 };
 
@@ -51,6 +54,7 @@ type DataAttrConfig = {
   nodeType: boolean;
   url: boolean;
   provenance: boolean;
+  figmaComponent: boolean;
 };
 
 type DomifyContext = {
@@ -214,12 +218,12 @@ function findNearestTaggedAncestor(node: BaseNode): { nodeId: string; componentN
 
 function buildDataAttrConfig(preset: string): DataAttrConfig {
   if (preset === 'none') {
-    return { component: false, nodeName: false, nodeId: false, nodeType: false, url: false, provenance: false };
+    return { component: false, nodeName: false, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: false };
   }
   if (preset === 'minimal') {
-    return { component: true, nodeName: true, nodeId: false, nodeType: false, url: false, provenance: false };
+    return { component: true, nodeName: true, nodeId: false, nodeType: false, url: false, provenance: false, figmaComponent: true };
   }
-  return { component: true, nodeName: true, nodeId: true, nodeType: true, url: true, provenance: true };
+  return { component: true, nodeName: true, nodeId: true, nodeType: true, url: true, provenance: true, figmaComponent: true };
 }
 
 function initCodegen(): void {
@@ -860,6 +864,22 @@ function toAttributes(
   if (dataAttrs.url && nodeUrl) {
     dataAttrList.push(`data-figma-url="${escapeHtml(nodeUrl)}"`);
   }
+  if (dataAttrs.figmaComponent && provenance.mainComponentName) {
+    const obj: Record<string, unknown> = { name: provenance.mainComponentName, nodeId: node.id };
+    if (provenance.componentProps) {
+      obj.props = provenance.componentProps;
+    }
+    if (provenance.isDefinition) {
+      obj.isDefinition = true;
+    }
+    const json = JSON.stringify(obj)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/'/g, "&#39;");
+    dataAttrList.push(`data-figma-component='${json}'`);
+  }
+
   if (dataAttrs.provenance) {
     if (provenance.componentKey)
       dataAttrList.push(`data-figma-component-key="${escapeHtml(provenance.componentKey)}"`);
@@ -903,14 +923,42 @@ async function buildMetadata(
 
 async function getProvenance(node: SceneNode): Promise<DomifyProvenance> {
   const isInstance = node.type === "INSTANCE";
+  const isDefinition = node.type === "COMPONENT";
   const mainComponent = isInstance ? await node.getMainComponentAsync() : null;
+
+  let mainComponentName: string | null = null;
+  let componentProps: Record<string, string | boolean> | null = null;
+
+  if (isInstance && mainComponent) {
+    mainComponentName =
+      mainComponent.parent?.type === "COMPONENT_SET"
+        ? mainComponent.parent.name
+        : mainComponent.name;
+
+    const props: Record<string, string | boolean> = {};
+    for (const [key, prop] of Object.entries(
+      (node as InstanceNode).componentProperties,
+    )) {
+      if (prop.type === "INSTANCE_SWAP") continue;
+      const cleanKey = key.replace(/#\d+:\d+$/, "");
+      props[cleanKey] = prop.value;
+    }
+    componentProps = Object.keys(props).length > 0 ? props : null;
+  } else if (isDefinition) {
+    mainComponentName =
+      node.parent?.type === "COMPONENT_SET" ? node.parent.name : node.name;
+  }
+
   return {
     isInstance,
+    isDefinition,
     mainComponentId: mainComponent ? mainComponent.id : null,
     mainComponentKey:
       mainComponent && typeof mainComponent.key === "string"
         ? mainComponent.key
         : null,
+    mainComponentName,
+    componentProps,
     componentKey: hasOwnComponentKey(node) ? node.key : null,
   };
 }
