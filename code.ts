@@ -203,6 +203,21 @@ function findTopLevelLayerName(node: BaseNode): string {
   return current.name;
 }
 
+function getViewportSize(node: SceneNode): { name: string; width: number; height: number } | null {
+  let current: BaseNode = node;
+  while (current.parent && current.parent.type !== 'PAGE') {
+    current = current.parent;
+  }
+  if ('width' in current && 'height' in current) {
+    const w = current.width;
+    const h = current.height;
+    if (typeof w === 'number' && typeof h === 'number') {
+      return { name: current.name, width: Math.round(w), height: Math.round(h) };
+    }
+  }
+  return null;
+}
+
 function findNearestTaggedAncestor(node: BaseNode): { nodeId: string; componentName: string } | null {
   let current = node.parent;
   while (current) {
@@ -294,8 +309,13 @@ figma.codegen.on("generate", async (event) => {
       ? formatTailwindCssOutput(context.cssMap)
       : formatCssOutput(context.cssMap);
 
+  const viewport = getViewportSize(event.node);
+  const viewportComment = viewport
+    ? `<!-- @viewport: ${viewport.name} (${viewport.width}x${viewport.height}) -->\n`
+    : '';
+
   return [
-    { title: "HTML", language: "HTML", code: rootResult.html },
+    { title: "HTML", language: "HTML", code: viewportComment + rootResult.html },
     { title: "CSS", language: "CSS", code: cssText },
     {
       title: "Metadata",
