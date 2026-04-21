@@ -4,6 +4,50 @@ const DOMIFY_CONFIG = {
   ignoredProperties: ["font-feature-settings", "font-family"],
 };
 
+const CURRENT_NODE_LAYOUT_PROPS = new Set([
+  "display",
+  "box-sizing",
+  "position",
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "z-index",
+  "width",
+  "height",
+  "min-width",
+  "min-height",
+  "max-width",
+  "max-height",
+  "overflow",
+  "overflow-x",
+  "overflow-y",
+  "flex",
+  "flex-grow",
+  "flex-shrink",
+  "flex-basis",
+  "flex-direction",
+  "flex-wrap",
+  "justify-content",
+  "align-items",
+  "align-content",
+  "align-self",
+  "order",
+  "gap",
+  "row-gap",
+  "column-gap",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+]);
+
 type DomifyNodeType =
   | "FRAME"
   | "GROUP"
@@ -288,6 +332,8 @@ figma.codegen.on("generate", async (event) => {
         code: "<!-- Selected node is hidden -->",
       },
       { title: "CSS", language: "CSS", code: "/* Selected node is hidden */" },
+      { title: "Layout (current node)", language: "CSS", code: "/* Selected node is hidden */" },
+      { title: "Style (current node)", language: "CSS", code: "/* Selected node is hidden */" },
       { title: "Metadata", language: "PLAINTEXT", code: "{}" },
     ];
   }
@@ -308,6 +354,7 @@ figma.codegen.on("generate", async (event) => {
     context.cssMode === "tailwind4"
       ? formatTailwindCssOutput(context.cssMap)
       : formatCssOutput(context.cssMap);
+  const currentNodeCss = await buildCurrentNodeCssSections(event.node);
 
   const viewport = getViewportSize(event.node);
   const viewportComment = viewport
@@ -317,6 +364,8 @@ figma.codegen.on("generate", async (event) => {
   return [
     { title: "HTML", language: "HTML", code: viewportComment + rootResult.html },
     { title: "CSS", language: "CSS", code: cssText },
+    { title: "Layout (current node)", language: "CSS", code: currentNodeCss.layout },
+    { title: "Style (current node)", language: "CSS", code: currentNodeCss.style },
     {
       title: "Metadata",
       language: "PLAINTEXT",
@@ -716,6 +765,33 @@ async function collectCssRule(
       `  ${marginProp}: ${negativeGap.value};`,
     );
   }
+}
+
+async function buildCurrentNodeCssSections(
+  node: SceneNode,
+): Promise<{ layout: string; style: string }> {
+  const nodeCss = await node.getCSSAsync();
+  const entries = Object.entries(nodeCss)
+    .filter(([prop]) => !DOMIFY_CONFIG.ignoredProperties.includes(prop))
+    .map(([prop, val]) => [prop, stripInlineComments(val)] as const);
+
+  const layoutEntries = entries.filter(([prop]) => CURRENT_NODE_LAYOUT_PROPS.has(prop));
+  const styleEntries = entries.filter(([prop]) => !CURRENT_NODE_LAYOUT_PROPS.has(prop));
+
+  return {
+    layout: formatCurrentNodeCssSection(layoutEntries, "/* No layout properties for current node. */"),
+    style: formatCurrentNodeCssSection(styleEntries, "/* No style properties for current node. */"),
+  };
+}
+
+function formatCurrentNodeCssSection(
+  entries: readonly (readonly [string, string])[],
+  emptyText: string,
+): string {
+  if (entries.length === 0) {
+    return emptyText;
+  }
+  return entries.map(([prop, value]) => `${prop}: ${value};`).join("\n");
 }
 
 async function collectTailwindClasses(
