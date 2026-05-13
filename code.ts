@@ -640,6 +640,25 @@ async function renderAssetNode(
     await collectCssRule(node, className, context.cssMap);
   }
 
+  const assetImageSrc = await resolveAssetImageSrc(node);
+  if (assetImageSrc) {
+    const attrs = toAssetAttributes(
+      node,
+      className,
+      metadata.provenance,
+      nodeUrl,
+      "image",
+      context.dataAttrs,
+      context.framework,
+      context.cssMode,
+      tailwindClasses,
+    );
+    return {
+      html: `${indent(depth)}<img${attrs} src="${assetImageSrc}" alt="asset:${escapeHtml(node.id)}" width="${w}" height="${h}" />`,
+      metadata,
+    };
+  }
+
   try {
     const svgString = await node.exportAsync({ format: "SVG_STRING" });
     if (svgString.length < SVG_SIZE_THRESHOLD) {
@@ -659,6 +678,28 @@ async function renderAssetNode(
         metadata,
       };
     }
+  } catch {
+    /* empty */
+  }
+
+  try {
+    const pngBytes = await node.exportAsync({ format: "PNG" });
+    const pngSrc = bytesToDataUri(pngBytes, "image/png");
+    const attrs = toAssetAttributes(
+      node,
+      className,
+      metadata.provenance,
+      nodeUrl,
+      "image",
+      context.dataAttrs,
+      context.framework,
+      context.cssMode,
+      tailwindClasses,
+    );
+    return {
+      html: `${indent(depth)}<img${attrs} src="${pngSrc}" alt="asset:${escapeHtml(node.id)}" width="${w}" height="${h}" />`,
+      metadata,
+    };
   } catch {
     /* empty */
   }
@@ -731,6 +772,105 @@ function escapeXml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+async function resolveAssetImageSrc(node: SceneNode): Promise<string | null> {
+  if (!("fills" in node) || !Array.isArray(node.fills)) {
+    return null;
+  }
+
+  const imagePaint = node.fills.find(
+    (fill): fill is ImagePaint =>
+      fill.type === "IMAGE" &&
+      fill.visible !== false &&
+      typeof fill.imageHash === "string" &&
+      fill.imageHash.length > 0,
+  );
+  if (!imagePaint) {
+    return null;
+  }
+
+  const imageHash = imagePaint.imageHash;
+  if (!imageHash) {
+    return null;
+  }
+
+  const image = figma.getImageByHash(imageHash);
+  if (!image) {
+    return null;
+  }
+
+  const bytes = await image.getBytesAsync();
+  if (bytes.length === 0) {
+    return null;
+  }
+
+  return bytesToDataUri(bytes, detectImageMimeType(bytes));
+}
+
+function detectImageMimeType(bytes: Uint8Array): string {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return "image/png";
+  }
+
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
+    return "image/gif";
+  }
+
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+
+  return "application/octet-stream";
+}
+
+function bytesToDataUri(bytes: Uint8Array, mimeType: string): string {
+  return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let output = "";
+
+  for (let i = 0; i < bytes.length; i += 3) {
+    const byte1 = bytes[i] ?? 0;
+    const byte2 = bytes[i + 1] ?? 0;
+    const byte3 = bytes[i + 2] ?? 0;
+    const chunk = (byte1 << 16) | (byte2 << 8) | byte3;
+
+    output += alphabet[(chunk >> 18) & 63];
+    output += alphabet[(chunk >> 12) & 63];
+    output += i + 1 < bytes.length ? alphabet[(chunk >> 6) & 63] : "=";
+    output += i + 2 < bytes.length ? alphabet[chunk & 63] : "=";
+  }
+
+  return output;
 }
 
 async function collectCssRule(
@@ -818,7 +958,12 @@ async function collectTailwindClasses(
     }
     const tailwindClass = cssToTailwind(prop, value);
     if (tailwindClass === '') continue;
-    tailwindClasses.push(tailwindClass ?? toArbitraryProperty(prop, value));
+    const fallbackClass = toArbitraryProperty(prop, value);
+    if (tailwindClass) {
+      tailwindClasses.push(tailwindClass);
+    } else if (fallbackClass) {
+      tailwindClasses.push(fallbackClass);
+    }
   }
 
   return dedupeClasses(tailwindClasses);
@@ -899,9 +1044,18 @@ function resolveLetterSpacing(node: SceneNode): string | null {
   return `tracking-[${ls.value}px]`;
 }
 
-function toArbitraryProperty(prop: string, value: string): string {
+function toArbitraryProperty(prop: string, value: string): string | null {
+  if (!isSafeArbitraryValue(value)) {
+    return null;
+  }
   const escaped = value.replace(/\s+/g, '_').replace(/'/g, "\\'");
   return `[${prop}:${escaped}]`;
+}
+
+function isSafeArbitraryValue(value: string): boolean {
+  if (/(?:url|image-set)\s*\(/i.test(value)) return false;
+  if (value.includes('[') || value.includes(']')) return false;
+  return true;
 }
 
 function addCssEntry(

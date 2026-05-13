@@ -136,6 +136,89 @@ function arb(prefix: string, value: string): string {
   return `${prefix}-[${value.replace(/\s+/g, '_')}]`;
 }
 
+function containsImageFunction(value: string): boolean {
+  return /(?:url|image-set)\s*\(/i.test(value);
+}
+
+function backgroundRepeatClass(value: string): string | null {
+  const map: Record<string, string> = {
+    repeat: 'bg-repeat',
+    'no-repeat': 'bg-no-repeat',
+    'repeat-x': 'bg-repeat-x',
+    'repeat-y': 'bg-repeat-y',
+    round: 'bg-repeat-round',
+    space: 'bg-repeat-space',
+  };
+  return map[value] ?? null;
+}
+
+function backgroundSizeClass(value: string): string | null {
+  const map: Record<string, string> = {
+    auto: 'bg-auto',
+    cover: 'bg-cover',
+    contain: 'bg-contain',
+  };
+  return map[value] ?? null;
+}
+
+function backgroundPositionClass(value: string): string | null {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ');
+  const map: Record<string, string> = {
+    center: 'bg-center',
+    top: 'bg-top',
+    bottom: 'bg-bottom',
+    left: 'bg-left',
+    right: 'bg-right',
+    'left top': 'bg-left-top',
+    'left bottom': 'bg-left-bottom',
+    'right top': 'bg-right-top',
+    'right bottom': 'bg-right-bottom',
+  };
+  return map[normalized] ?? null;
+}
+
+function backgroundShorthandClass(value: string): string {
+  if (!containsImageFunction(value)) {
+    return colorClass('background-color', value) ?? '';
+  }
+
+  const classes: string[] = [];
+  const repeatMatch = value.match(/\b(no-repeat|repeat-x|repeat-y|repeat|round|space)\b/i);
+  if (repeatMatch) {
+    const repeatClass = backgroundRepeatClass(repeatMatch[1].toLowerCase());
+    if (repeatClass) classes.push(repeatClass);
+  }
+
+  const slashIndex = value.indexOf('/');
+  if (slashIndex >= 0) {
+    const beforeSlash = value.slice(0, slashIndex).trim();
+    const afterSlash = value.slice(slashIndex + 1).trim();
+    const positionTokens = beforeSlash
+      .split(/\s+/)
+      .filter((token) => /^(left|right|top|bottom|center)$/i.test(token));
+    if (positionTokens.length > 0) {
+      const positionClass = backgroundPositionClass(positionTokens.join(' '));
+      if (positionClass) classes.push(positionClass);
+    }
+
+    const sizeToken = afterSlash.split(/\s+/)[0]?.toLowerCase();
+    if (sizeToken) {
+      const sizeClass = backgroundSizeClass(sizeToken);
+      if (sizeClass) classes.push(sizeClass);
+    }
+  } else {
+    const positionTokens = value
+      .split(/\s+/)
+      .filter((token) => /^(left|right|top|bottom|center)$/i.test(token));
+    if (positionTokens.length > 0) {
+      const positionClass = backgroundPositionClass(positionTokens.join(' '));
+      if (positionClass) classes.push(positionClass);
+    }
+  }
+
+  return classes.join(' ');
+}
+
 export function cssToTailwind(prop: string, value: string): string | null {
   const normalizedProp = prop.trim().toLowerCase();
   const normalizedValue = normalizeVar(value.trim());
@@ -161,7 +244,25 @@ export function cssToTailwind(prop: string, value: string): string | null {
   }
 
   if (normalizedProp === 'background') {
-    return colorClass('background-color', normalizedValue);
+    return backgroundShorthandClass(normalizedValue);
+  }
+
+  if (normalizedProp === 'background-image') {
+    if (normalizedValue === 'none') return 'bg-none';
+    if (containsImageFunction(normalizedValue)) return '';
+    return arb('bg', normalizedValue);
+  }
+
+  if (normalizedProp === 'background-repeat') {
+    return backgroundRepeatClass(normalizedValue);
+  }
+
+  if (normalizedProp === 'background-size') {
+    return backgroundSizeClass(normalizedValue);
+  }
+
+  if (normalizedProp === 'background-position') {
+    return backgroundPositionClass(normalizedValue);
   }
 
   if (normalizedProp === 'border') {
